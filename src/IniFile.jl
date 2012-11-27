@@ -3,7 +3,8 @@ using Base
 
 import Base.get,
        Base.has,
-       Base.read
+       Base.read,
+       Base.show
 
 export IniFile,
        defaults,
@@ -12,7 +13,9 @@ export IniFile,
        has,
        has_section,
        read,
-       section
+       section,
+       sections,
+       show
 
 typealias HTSS Dict{String,String}
 
@@ -22,6 +25,10 @@ type IniFile
 end
 
 IniFile() = IniFile((String=>HTSS)[], HTSS())
+
+defaults(inifile::IniFile) = inifile.defaults
+
+sections(inifile::IniFile) = inifile.sections
 
 function read(inifile::IniFile, stream::IOStream)
     current_section = inifile.defaults
@@ -63,9 +70,20 @@ function read(inifile::IniFile, filename::String)
     inifile
 end
 
-defaults(inifile::IniFile) = inifile.defaults
+function show(io::IO, inifile::IniFile)
+    for (key, value) in defaults(inifile)
+        println(io, "$key=$value")
+    end
+    for (name, htss) in sections(inifile)
+        println(io, "[$name]")
+        for (key, value) in htss
+            println(io, "$key=$value")
+        end
+    end
+end
 
 get(inifile::IniFile, section::String, key::String) = get(inifile, section, key, :notfound)
+
 function get(inifile::IniFile, section::String, key::String, notfound)
     if has(inifile.sections, section) && has(inifile.sections[section], key)
         return inifile.sections[section][key]
@@ -75,16 +93,11 @@ function get(inifile::IniFile, section::String, key::String, notfound)
     notfound
 end
 
-function get_bool(inifile::IniFile, section::String, key::String)
-    sval = get(inifile, section, key)
-    if sval == "true"
-        return true
-    end
-    return false
-end
+get_bool(inifile::IniFile, section::String, key::String) = 
+    get(inifile, section, key) == "true"
 
 has(inifile::IniFile, section::String, key::String) =
-    has(inifile.sections,section) && has(inifile.sections[section], key)
+    has(inifile.sections, section) && has(inifile.sections[section], key)
 
 has_section(inifile::IniFile, section::String) = has(inifile.sections, section)
 

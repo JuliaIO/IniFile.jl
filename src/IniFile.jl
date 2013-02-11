@@ -44,8 +44,8 @@ function read(inifile::IniFile, stream::IOStream)
             end
             current_section = inifile.sections[section]
         else
-            i = strchr(s, '=')
-            j = strchr(s, ':')
+            i = search(s, '=')
+            j = search(s, ':')
             if i == 0 && j == 0
                 # TODO: allow multiline values
                 println("skipping malformed line: $s")

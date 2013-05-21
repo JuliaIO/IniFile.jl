@@ -2,7 +2,7 @@ module Inifile
 using Base
 
 import Base.get,
-       Base.has,
+       Base.haskey,
        Base.read,
        Base.show
 
@@ -10,7 +10,6 @@ export IniFile,
        defaults,
        get,
        get_bool,
-       has,
        has_section,
        read,
        section,
@@ -39,7 +38,7 @@ function read(inifile::IniFile, stream::IOStream)
             continue
         elseif s[1] == '[' && s[end] == ']'
             section = s[2:end-1]
-            if !has(inifile.sections, section)
+            if !haskey(inifile.sections, section)
                 inifile.sections[section] = HTSS()
             end
             current_section = inifile.sections[section]
@@ -85,9 +84,9 @@ end
 get(inifile::IniFile, section::String, key::String) = get(inifile, section, key, :notfound)
 
 function get(inifile::IniFile, section::String, key::String, notfound)
-    if has(inifile.sections, section) && has(inifile.sections[section], key)
+    if haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
         return inifile.sections[section][key]
-    elseif has(inifile.defaults, key)
+    elseif haskey(inifile.defaults, key)
         return inifile.defaults[key]
     end
     notfound
@@ -96,10 +95,10 @@ end
 get_bool(inifile::IniFile, section::String, key::String) = 
     get(inifile, section, key) == "true"
 
-has(inifile::IniFile, section::String, key::String) =
-    has(inifile.sections, section) && has(inifile.sections[section], key)
+haskey(inifile::IniFile, section::String, key::String) =
+    haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
 
-has_section(inifile::IniFile, section::String) = has(inifile.sections, section)
+has_section(inifile::IniFile, section::String) = haskey(inifile.sections, section)
 
 section(inifile::IniFile, section::String) = inifile.sections[section]
 

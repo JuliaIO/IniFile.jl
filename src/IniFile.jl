@@ -1,4 +1,4 @@
-module Inifile
+module IniFile
 using Base
 
 import Base.get,
@@ -6,7 +6,7 @@ import Base.get,
        Base.read,
        Base.show
 
-export IniFile,
+export Inifile,
        defaults,
        get,
        get_bool,
@@ -18,18 +18,18 @@ export IniFile,
 
 typealias HTSS Dict{String,String}
 
-type IniFile
+type Inifile
     sections::Dict{String,HTSS}
     defaults::HTSS
 end
 
-IniFile() = IniFile((String=>HTSS)[], HTSS())
+Inifile() = Inifile((String=>HTSS)[], HTSS())
 
-defaults(inifile::IniFile) = inifile.defaults
+defaults(inifile::Inifile) = inifile.defaults
 
-sections(inifile::IniFile) = inifile.sections
+sections(inifile::Inifile) = inifile.sections
 
-function read(inifile::IniFile, stream::IOStream)
+function read(inifile::Inifile, stream::IOStream)
     current_section = inifile.defaults
     for line in EachLine(stream)
         s = strip(line)
@@ -62,14 +62,14 @@ function read(inifile::IniFile, stream::IOStream)
     inifile
 end
 
-function read(inifile::IniFile, filename::String)
+function read(inifile::Inifile, filename::String)
     f = open(filename)
     read(inifile, f)
     close(f)
     inifile
 end
 
-function show(io::IO, inifile::IniFile)
+function show(io::IO, inifile::Inifile)
     for (key, value) in defaults(inifile)
         println(io, "$key=$value")
     end
@@ -81,9 +81,9 @@ function show(io::IO, inifile::IniFile)
     end
 end
 
-get(inifile::IniFile, section::String, key::String) = get(inifile, section, key, :notfound)
+get(inifile::Inifile, section::String, key::String) = get(inifile, section, key, :notfound)
 
-function get(inifile::IniFile, section::String, key::String, notfound)
+function get(inifile::Inifile, section::String, key::String, notfound)
     if haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
         return inifile.sections[section][key]
     elseif haskey(inifile.defaults, key)
@@ -92,14 +92,14 @@ function get(inifile::IniFile, section::String, key::String, notfound)
     notfound
 end
 
-get_bool(inifile::IniFile, section::String, key::String) = 
+get_bool(inifile::Inifile, section::String, key::String) = 
     get(inifile, section, key) == "true"
 
-haskey(inifile::IniFile, section::String, key::String) =
+haskey(inifile::Inifile, section::String, key::String) =
     haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
 
-has_section(inifile::IniFile, section::String) = haskey(inifile.sections, section)
+has_section(inifile::Inifile, section::String) = haskey(inifile.sections, section)
 
-section(inifile::IniFile, section::String) = inifile.sections[section]
+section(inifile::Inifile, section::String) = inifile.sections[section]
 
 end # module

@@ -4,19 +4,25 @@ using Base
 import Base.get,
        Base.haskey,
        Base.read,
+       Base.write,
        Base.show
 
 export Inifile,
        defaults,
        get,
+       set,
        get_bool,
+       get_int,
+       get_float,
        has_section,
        read,
+       write,
        section,
        sections,
        show
 
-typealias HTSS Dict{String,String}
+typealias INIVAL Union(String,Number,Bool,Nothing)
+typealias HTSS Dict{String,INIVAL}
 
 type Inifile
     sections::Dict{String,HTSS}
@@ -29,7 +35,7 @@ defaults(inifile::Inifile) = inifile.defaults
 
 sections(inifile::Inifile) = inifile.sections
 
-function read(inifile::Inifile, stream::IOStream)
+function read(inifile::Inifile, stream::IO)
     current_section = inifile.defaults
     for line in EachLine(stream)
         s = strip(line)
@@ -63,13 +69,14 @@ function read(inifile::Inifile, stream::IOStream)
 end
 
 function read(inifile::Inifile, filename::String)
-    f = open(filename)
-    read(inifile, f)
-    close(f)
+    open(filename) do f
+        read(inifile, f)
+    end
     inifile
 end
 
-function show(io::IO, inifile::Inifile)
+show(io::IO, inifile::Inifile) = write(io, inifile)
+function write(io::IO, inifile::Inifile)
     for (key, value) in defaults(inifile)
         println(io, "$key=$value")
     end
@@ -92,8 +99,31 @@ function get(inifile::Inifile, section::String, key::String, notfound)
     notfound
 end
 
+function set(inifile::Inifile, section::String, key::String, val::INIVAL)
+    if !haskey(inifile.sections, section)
+        (val == nothing) && return val
+        inifile.sections[section] = HTSS()
+    end
+   
+    sec = inifile.sections[section] 
+    if val == nothing
+        if haskey(sec, key)
+            delete!(sec, key)
+        end
+        return val
+    end
+    sec[key] = val
+    val
+end
+
 get_bool(inifile::Inifile, section::String, key::String) = 
-    get(inifile, section, key) == "true"
+    lowercase(get(inifile, section, key)) == "true"
+
+get_int(inifile::Inifile, section::String, key::String) = 
+    parseint(get(inifile, section, key))
+
+get_float(inifile::Inifile, section::String, key::String) = 
+    parsefloat(get(inifile, section, key))
 
 haskey(inifile::Inifile, section::String, key::String) =
     haskey(inifile.sections, section) && haskey(inifile.sections[section], key)

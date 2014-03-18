@@ -60,7 +60,7 @@ function read(inifile::Inifile, stream::IO)
                     idx = max(i, j)
                 end
                 key = rstrip(s[1:idx-1])
-                val = lstrip(s[idx+1:end])
+                val = strip(split(s[idx+1:end],r"[\t, ][#,;]")[1])
                 current_section[key] = val
             end
         end

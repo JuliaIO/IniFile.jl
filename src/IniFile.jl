@@ -99,6 +99,16 @@ function get(inifile::Inifile, section::String, key::String, notfound)
     notfound
 end
 
+# This get function uses the defaults section
+get(inifile::Inifile, key::String) = get(inifile, key, :notfound)
+
+function get(inifile::Inifile,  key::String, notfound)
+    if haskey(inifile.defaults, key)
+        return inifile.defaults[key]
+    end
+    notfound
+end
+
 function set(inifile::Inifile, section::String, key::String, val::INIVAL)
     if !haskey(inifile.sections, section)
         (val == nothing) && return val
@@ -106,6 +116,19 @@ function set(inifile::Inifile, section::String, key::String, val::INIVAL)
     end
    
     sec = inifile.sections[section] 
+    if val == nothing
+        if haskey(sec, key)
+            delete!(sec, key)
+        end
+        return val
+    end
+    sec[key] = val
+    val
+end
+
+# This set function uses the defaults section
+function set(inifile::Inifile, key::String, val::INIVAL)
+    sec = inifile.defaults
     if val == nothing
         if haskey(sec, key)
             delete!(sec, key)

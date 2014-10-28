@@ -29,7 +29,7 @@ type Inifile
     defaults::HTSS
 end
 
-Inifile() = Inifile((String=>HTSS)[], HTSS())
+Inifile() = Inifile(Dict{String,HTSS}(), HTSS())
 
 defaults(inifile::Inifile) = inifile.defaults
 

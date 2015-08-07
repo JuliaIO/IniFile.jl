@@ -35,42 +35,54 @@ defaults(inifile::Inifile) = inifile.defaults
 
 sections(inifile::Inifile) = inifile.sections
 
-function read(inifile::Inifile, stream::IO)
+function read(inifile::Inifile, stream::IO, midline_comments=false)
     current_section = inifile.defaults
+    previous_line = ""
     for line in EachLine(stream)
         s = strip(line)
         # comments start with # or ;
-        if length(s) < 3 || s[1] == '#' || s[1] == ';'
+        if (previous_line == "" && length(s) < 3) || s[1] == '#' || s[1] == ';'
             continue
-        elseif s[1] == '[' && s[end] == ']'
+        end
+        # Sections are declared between brackets '[]'
+        if s[1] == '[' && s[end] == ']'
             section = s[2:end-1]
             if !haskey(inifile.sections, section)
                 inifile.sections[section] = HTSS()
             end
             current_section = inifile.sections[section]
+            continue
+        end
+        # Multiline values.  First join with the previous line
+        s = previous_line * s
+        if s[end] == '\\'       # Should midline-comments be extended? Assume yes.
+            previous_line = s[1:end-1]
+            continue
         else
-            i = search(s, '=')
-            j = search(s, ':')
-            if i == 0 && j == 0
-                # TODO: allow multiline values
-                println("skipping malformed line: $s")
-            else
-                idx = min(i, j)
-                if idx == 0
-                    idx = max(i, j)
-                end
-                key = rstrip(s[1:idx-1])
-                val = lstrip(s[idx+1:end])
-                current_section[key] = val
+            previous_line = ""
+        end
+        # Process parameter / value pair
+        i = search(s, '=')
+        j = search(s, ':')
+        if i == 0 && j == 0
+            println("skipping malformed line: $s")
+        else
+            idx = min(i, j)
+            if idx == 0
+                idx = max(i, j)
             end
+            key = rstrip(s[1:idx-1])
+            val = lstrip(s[idx+1:end])
+            val = (midline_comments) ? strip(split(val, ';')[1]) : val
+            current_section[key] = val
         end
     end
     inifile
 end
 
-function read(inifile::Inifile, filename::String)
+function read(inifile::Inifile, filename::String, midline_comments=false)
     open(filename) do f
-        read(inifile, f)
+        read(inifile, f, midline_comments)
     end
     inifile
 end
@@ -114,8 +126,8 @@ function set(inifile::Inifile, section::String, key::String, val::INIVAL)
         (val == nothing) && return val
         inifile.sections[section] = HTSS()
     end
-   
-    sec = inifile.sections[section] 
+
+    sec = inifile.sections[section]
     if val == nothing
         if haskey(sec, key)
             delete!(sec, key)
@@ -139,13 +151,13 @@ function set(inifile::Inifile, key::String, val::INIVAL)
     val
 end
 
-get_bool(inifile::Inifile, section::String, key::String) = 
+get_bool(inifile::Inifile, section::String, key::String) =
     lowercase(get(inifile, section, key)) == "true"
 
-get_int(inifile::Inifile, section::String, key::String) = 
+get_int(inifile::Inifile, section::String, key::String) =
     parseint(get(inifile, section, key))
 
-get_float(inifile::Inifile, section::String, key::String) = 
+get_float(inifile::Inifile, section::String, key::String) =
     parsefloat(get(inifile, section, key))
 
 haskey(inifile::Inifile, section::String, key::String) =

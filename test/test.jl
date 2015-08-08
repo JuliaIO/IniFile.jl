@@ -39,22 +39,15 @@ read(ini, "test.ini")
 # test comments mid-line
 ini2 = Inifile()
 read(ini2, "test.ini", true)
-@test get(ini, "section 4", "midline") != "value"
+@test get(ini, "section 4", "midline") == "value ; comment"
 @test get(ini2, "section 4", "midline") == "value"
 
 # test multi-line values
-val = get(ini, "section 4", "multiline1")
-@test val != :notfound
-@test length(val) >= 30 && val[end] == '.'
+@test get(ini, "section 4", "multiline1") == "This is multiple lines of text that should be formed into a single line."
 
 # test multi-line value with comment midline
-val = get(ini, "section 4", "multiline2")
-@test val != :notfound
-@test length(val) >= 25 && val[end] == '.'
-val = get(ini2, "section 4", "multiline2")
-@test val != :notfound
-@test length(val) >= 25 && val[end] == 't'
-
+@test get(ini, "section 4", "multiline2") == "This is multiple lines of text that; should be formed into a single line without the commented section."
+@test get(ini2, "section 4", "multiline2") == "This is multiple lines of text that"
 
 # key/section not found
 @test get(ini, "section 2", "noname") == :notfound

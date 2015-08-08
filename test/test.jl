@@ -36,6 +36,19 @@ read(ini, "test.ini")
 @test get(ini, "section 2", "delimtest1") == "value with :"
 @test get(ini, "section 2", "delimtest2") == "name = value"
 
+# test comments mid-line
+ini2 = Inifile()
+read(ini2, "test.ini", true)
+@test get(ini, "section 4", "midline") == "value ; comment"
+@test get(ini2, "section 4", "midline") == "value"
+
+# test multi-line values
+@test get(ini, "section 4", "multiline1") == "This is multiple lines of text that should be formed into a single line."
+
+# test multi-line value with comment midline
+@test get(ini, "section 4", "multiline2") == "This is multiple lines of text that; should be formed into a single line without the commented section."
+@test get(ini2, "section 4", "multiline2") == "This is multiple lines of text that"
+
 # key/section not found
 @test get(ini, "section 2", "noname") == :notfound
 @test get(ini, "section 3", "noname") == :notfound
@@ -56,4 +69,3 @@ ini = Inifile()
 read(ini, iob)
 @test get(ini, "section 3", "strname1") == "new string"
 @test get(ini, "section 3", "intname1") == "1"
-

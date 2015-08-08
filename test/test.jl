@@ -36,6 +36,26 @@ read(ini, "test.ini")
 @test get(ini, "section 2", "delimtest1") == "value with :"
 @test get(ini, "section 2", "delimtest2") == "name = value"
 
+# test comments mid-line
+ini2 = Inifile()
+read(ini2, "test.ini", true)
+@test get(ini, "section 4", "midline") != "value"
+@test get(ini2, "section 4", "midline") == "value"
+
+# test multi-line values
+val = get(ini, "section 4", "multiline1")
+@test val != :notfound
+@test length(val) >= 30 && val[end] == '.'
+
+# test multi-line value with comment midline
+val = get(ini, "section 4", "multiline2")
+@test val != :notfound
+@test length(val) >= 25 && val[end] == '.'
+val = get(ini2, "section 4", "multiline2")
+@test val != :notfound
+@test length(val) >= 25 && val[end] == 't'
+
+
 # key/section not found
 @test get(ini, "section 2", "noname") == :notfound
 @test get(ini, "section 3", "noname") == :notfound
@@ -56,4 +76,3 @@ ini = Inifile()
 read(ini, iob)
 @test get(ini, "section 3", "strname1") == "new string"
 @test get(ini, "section 3", "intname1") == "1"
-

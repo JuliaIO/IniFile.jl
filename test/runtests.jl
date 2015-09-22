@@ -2,7 +2,7 @@ using IniFile
 using Base.Test
 
 ini = Inifile()
-read(ini, "test.ini")
+read(ini, joinpath(dirname(@__FILE__),"test.ini"))
 
 # section exists
 @test has_section(ini, "not present") == false

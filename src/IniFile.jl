@@ -21,15 +21,15 @@ export Inifile,
        sections,
        show
 
-typealias INIVAL Union(String,Number,Bool,Nothing)
-typealias HTSS Dict{String,INIVAL}
+typealias INIVAL Union{AbstractString,Number,Bool,Void}
+typealias HTSS Dict{AbstractString,INIVAL}
 
 type Inifile
-    sections::Dict{String,HTSS}
+    sections::Dict{AbstractString,HTSS}
     defaults::HTSS
 end
 
-Inifile() = Inifile(Dict{String,HTSS}(), HTSS())
+Inifile() = Inifile(Dict{AbstractString,HTSS}(), HTSS())
 
 defaults(inifile::Inifile) = inifile.defaults
 
@@ -68,7 +68,7 @@ function read(inifile::Inifile, stream::IO)
     inifile
 end
 
-function read(inifile::Inifile, filename::String)
+function read(inifile::Inifile, filename::AbstractString)
     open(filename) do f
         read(inifile, f)
     end
@@ -88,9 +88,9 @@ function write(io::IO, inifile::Inifile)
     end
 end
 
-get(inifile::Inifile, section::String, key::String) = get(inifile, section, key, :notfound)
+get(inifile::Inifile, section::AbstractString, key::AbstractString) = get(inifile, section, key, :notfound)
 
-function get(inifile::Inifile, section::String, key::String, notfound)
+function get(inifile::Inifile, section::AbstractString, key::AbstractString, notfound)
     if haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
         return inifile.sections[section][key]
     elseif haskey(inifile.defaults, key)
@@ -100,16 +100,16 @@ function get(inifile::Inifile, section::String, key::String, notfound)
 end
 
 # This get function uses the defaults section
-get(inifile::Inifile, key::String) = get(inifile, key, :notfound)
+get(inifile::Inifile, key::AbstractString) = get(inifile, key, :notfound)
 
-function get(inifile::Inifile,  key::String, notfound)
+function get(inifile::Inifile,  key::AbstractString, notfound)
     if haskey(inifile.defaults, key)
         return inifile.defaults[key]
     end
     notfound
 end
 
-function set(inifile::Inifile, section::String, key::String, val::INIVAL)
+function set(inifile::Inifile, section::AbstractString, key::AbstractString, val::INIVAL)
     if !haskey(inifile.sections, section)
         (val == nothing) && return val
         inifile.sections[section] = HTSS()
@@ -127,7 +127,7 @@ function set(inifile::Inifile, section::String, key::String, val::INIVAL)
 end
 
 # This set function uses the defaults section
-function set(inifile::Inifile, key::String, val::INIVAL)
+function set(inifile::Inifile, key::AbstractString, val::INIVAL)
     sec = inifile.defaults
     if val == nothing
         if haskey(sec, key)
@@ -139,20 +139,20 @@ function set(inifile::Inifile, key::String, val::INIVAL)
     val
 end
 
-get_bool(inifile::Inifile, section::String, key::String) = 
+get_bool(inifile::Inifile, section::AbstractString, key::AbstractString) = 
     lowercase(get(inifile, section, key)) == "true"
 
-get_int(inifile::Inifile, section::String, key::String) = 
-    parseint(get(inifile, section, key))
+get_int(inifile::Inifile, section::AbstractString, key::AbstractString) = 
+    parse(Int, get(inifile, section, key))
 
-get_float(inifile::Inifile, section::String, key::String) = 
-    parsefloat(get(inifile, section, key))
+get_float(inifile::Inifile, section::AbstractString, key::AbstractString) = 
+    parse(Float64, get(inifile, section, key))
 
-haskey(inifile::Inifile, section::String, key::String) =
+haskey(inifile::Inifile, section::AbstractString, key::AbstractString) =
     haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
 
-has_section(inifile::Inifile, section::String) = haskey(inifile.sections, section)
+has_section(inifile::Inifile, section::AbstractString) = haskey(inifile.sections, section)
 
-section(inifile::Inifile, section::String) = inifile.sections[section]
+section(inifile::Inifile, section::AbstractString) = inifile.sections[section]
 
 end # module

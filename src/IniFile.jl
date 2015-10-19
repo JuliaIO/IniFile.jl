@@ -1,4 +1,5 @@
 module IniFile
+using Compat
 using Base
 
 import Base.get,
@@ -21,11 +22,11 @@ export Inifile,
        sections,
        show
 
-typealias INIVAL Union{AbstractString,Number,Bool,Void}
+@compat typealias INIVAL Union{AbstractString,Number,Bool,Void}
 typealias HTSS Dict{AbstractString,INIVAL}
 
 type Inifile
-    sections::Dict{AbstractString,HTSS}
+@compat    sections::Dict{AbstractString,HTSS}
     defaults::HTSS
 end
 

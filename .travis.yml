@@ -1,10 +1,10 @@
 language: julia
 os:
-  - linux
-  - osx
+    - linux
+    - osx
 julia:
-  - 0.4
-  - nigthly
-sudo: false
+    - 0.3
+    - 0.4
+    - nightly
 notifications:
   email: false

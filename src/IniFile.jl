@@ -26,7 +26,7 @@ export Inifile,
 typealias HTSS Dict{AbstractString,INIVAL}
 
 type Inifile
-@compat    sections::Dict{AbstractString,HTSS}
+    sections::Dict{AbstractString,HTSS}
     defaults::HTSS
 end
 

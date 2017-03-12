@@ -49,7 +49,7 @@ read(ini, joinpath(dirname(@__FILE__),"test.ini"))
 
 iob = IOBuffer()
 show(iob, ini)
-buff = takebuf_string(iob)
+buff = @compat String(take!(iob))
 
 iob = IOBuffer(buff)
 ini = Inifile()

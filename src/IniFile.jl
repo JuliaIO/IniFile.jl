@@ -1,6 +1,7 @@
+__precompile__()
+
 module IniFile
 using Compat
-using Base
 
 import Base.get,
        Base.haskey,
@@ -22,8 +23,8 @@ export Inifile,
        sections,
        show
 
-@compat typealias INIVAL Union{AbstractString,Number,Bool,Void}
-typealias HTSS Dict{AbstractString,INIVAL}
+const INIVAL = Union{AbstractString,Number,Bool,Void}
+const HTSS   = Dict{AbstractString,INIVAL}
 
 type Inifile
     sections::Dict{AbstractString,HTSS}
@@ -115,7 +116,7 @@ function set(inifile::Inifile, section::AbstractString, key::AbstractString, val
         (val == nothing) && return val
         inifile.sections[section] = HTSS()
     end
-   
+
     sec = inifile.sections[section] 
     if val == nothing
         if haskey(sec, key)
@@ -140,13 +141,13 @@ function set(inifile::Inifile, key::AbstractString, val::INIVAL)
     val
 end
 
-get_bool(inifile::Inifile, section::AbstractString, key::AbstractString) = 
+get_bool(inifile::Inifile, section::AbstractString, key::AbstractString) =
     lowercase(get(inifile, section, key)) == "true"
 
-get_int(inifile::Inifile, section::AbstractString, key::AbstractString) = 
+get_int(inifile::Inifile, section::AbstractString, key::AbstractString) =
     parse(Int, get(inifile, section, key))
 
-get_float(inifile::Inifile, section::AbstractString, key::AbstractString) = 
+get_float(inifile::Inifile, section::AbstractString, key::AbstractString) =
     parse(Float64, get(inifile, section, key))
 
 haskey(inifile::Inifile, section::AbstractString, key::AbstractString) =

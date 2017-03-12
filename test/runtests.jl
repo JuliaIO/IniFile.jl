@@ -1,6 +1,7 @@
 using IniFile
 using Base.Test
 using Compat
+using Compat: String
 
 ini = Inifile()
 read(ini, joinpath(dirname(@__FILE__),"test.ini"))

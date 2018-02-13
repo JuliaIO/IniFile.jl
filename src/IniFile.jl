@@ -10,17 +10,13 @@ import Base.get,
 
 export Inifile,
        defaults,
-       get,
        set,
        get_bool,
        get_int,
        get_float,
        has_section,
-       read,
-       write,
        section,
-       sections,
-       show
+       sections
 
 const INIVAL = Union{AbstractString,Number,Bool,Nothing}
 const HTSS   = Dict{AbstractString,INIVAL}
@@ -50,9 +46,9 @@ function read(inifile::Inifile, stream::IO)
             end
             current_section = inifile.sections[section]
         else
-            i = search(s, '=')
-            j = search(s, ':')
-            if (i === nothing || i == 0) && (j == 0 || j === nothing)
+            i = findfirst(equalto('='), s)
+            j = findfirst(equalto(':'), s)
+            if i === nothing && j === nothing
                 # TODO: allow multiline values
                 println("skipping malformed line: $s")
             else

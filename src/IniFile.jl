@@ -1,5 +1,4 @@
 __precompile__()
-
 module IniFile
 using Compat
 
@@ -23,10 +22,10 @@ export Inifile,
        sections,
        show
 
-const INIVAL = Union{AbstractString,Number,Bool,Void}
+const INIVAL = Union{AbstractString,Number,Bool,Nothing}
 const HTSS   = Dict{AbstractString,INIVAL}
 
-type Inifile
+mutable struct Inifile
     sections::Dict{AbstractString,HTSS}
     defaults::HTSS
 end
@@ -39,7 +38,7 @@ sections(inifile::Inifile) = inifile.sections
 
 function read(inifile::Inifile, stream::IO)
     current_section = inifile.defaults
-    for line in EachLine(stream)
+    for line in eachline(stream)
         s = strip(line)
         # comments start with # or ;
         if length(s) < 3 || s[1] == '#' || s[1] == ';'
@@ -53,13 +52,13 @@ function read(inifile::Inifile, stream::IO)
         else
             i = search(s, '=')
             j = search(s, ':')
-            if i == 0 && j == 0
+            if (i === nothing || i == 0) && (j == 0 || j === nothing)
                 # TODO: allow multiline values
                 println("skipping malformed line: $s")
             else
-                idx = min(i, j)
+                idx = min(ifelse(i === nothing, 0, i), ifelse(j === nothing, 0, j))
                 if idx == 0
-                    idx = max(i, j)
+                    idx = max(ifelse(i === nothing, 0, i), ifelse(j === nothing, 0, j))
                 end
                 key = rstrip(s[1:idx-1])
                 val = lstrip(s[idx+1:end])

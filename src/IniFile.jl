@@ -1,6 +1,5 @@
 __precompile__()
 module IniFile
-using Compat
 
 import Base.get,
        Base.haskey,
@@ -46,8 +45,8 @@ function read(inifile::Inifile, stream::IO)
             end
             current_section = inifile.sections[section]
         else
-            i = findfirst(equalto('='), s)
-            j = findfirst(equalto(':'), s)
+            i = findfirst(isequal('='), s)
+            j = findfirst(isequal(':'), s)
             if i === nothing && j === nothing
                 # TODO: allow multiline values
                 println("skipping malformed line: $s")

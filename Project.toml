@@ -1,0 +1,6 @@
+authors = ["David de Laat", "Jeff Bezanson", "Jeff Bezanson", "Stefan Karpinski", "Stefan Karpinski"]
+name = "IniFile"
+uuid = "6d3e9c20-783a-11e8-259d-b3e6192296b0"
+version = "0.5.0"
+
+[deps]

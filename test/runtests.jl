@@ -1,5 +1,5 @@
 using IniFile
-using Compat, Compat.Test
+using Test
 
 ini = Inifile()
 read(ini, joinpath(dirname(@__FILE__),"test.ini"))
@@ -49,7 +49,7 @@ read(ini, joinpath(dirname(@__FILE__),"test.ini"))
 
 iob = IOBuffer()
 show(iob, ini)
-buff = @compat String(take!(iob))
+buff = String(take!(iob))
 
 iob = IOBuffer(buff)
 ini = Inifile()

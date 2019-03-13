@@ -37,7 +37,7 @@ set(ini, "section", "key", value)
 
 #### Parse a `*.ini` file
 ```julia
-ini = read(IniFile(), "file.ini")
+ini = read(Inifile(), "file.ini")
 ```
 
 #### Write out a `*.ini` file

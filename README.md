@@ -11,7 +11,7 @@ Reading and writing Windows-style INI files from Julia
 
 ```julia
 Pkg.add("IniFile") # first-time only
-using Inifile # load code into current session
+using IniFile # load code into current session
 ```
 
 #### Create IniFile

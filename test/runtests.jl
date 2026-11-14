@@ -537,7 +537,12 @@ end
 @testset "show" begin
     ini = parse_ini("a = 1\n[s]\nb = 2\nc = 3\n")
     @test sprint(show, ini) == "Inifile(1 section, 3 keys)"
-    @test string(ini) == "Inifile(1 section, 3 keys)"
+    @test repr(ini) == "Inifile(1 section, 3 keys)"
+    @test sprint(show, [ini]) == "Inifile[Inifile(1 section, 3 keys)]"
+    # print and string give the file contents, as in 0.5
+    @test string(ini) == ini_string(ini) == "a = 1\n\n[s]\nb = 2\nc = 3\n"
+    @test sprint(print, ini) == ini_string(ini)
+    @test string(Inifile()) == ""
     @test repr("text/plain", ini) == "Inifile(1 section, 3 keys):\na = 1\n\n[s]\nb = 2\nc = 3"
     @test repr("text/plain", Inifile()) == "Inifile(0 sections, 0 keys)"
     @test sprint(show, parse_ini("[a]\nk = v\n[b]\n")) == "Inifile(2 sections, 1 key)"

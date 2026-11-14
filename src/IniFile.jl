@@ -303,6 +303,8 @@ first, then each section in order, separated by blank lines. Entries are written
 as `key = value`. Multi-line values are written as continuation lines indented
 with a tab, so that [`read`](@ref) restores them.
 
+`print(io, ini)` and `string(ini)` also give the file contents.
+
 # Examples
 ```julia-repl
 julia> ini = Inifile();
@@ -344,7 +346,10 @@ end
 
 _plural(n::Int, word::String) = n == 1 ? "1 $word" : "$n $(word)s"
 
-# Compact form, used by `print`, `string` and when shown inside containers.
+# `print` and `string` give the file contents, as they did in IniFile 0.5.
+Base.print(io::IO, ini::Inifile) = (write(io, ini); nothing)
+
+# Compact form, used when shown inside containers and by `repr`.
 function Base.show(io::IO, ini::Inifile)
     nkeys = length(ini.defaults) + sum(length, values(ini.sections); init=0)
     print(io, "Inifile(", _plural(length(ini.sections), "section"), ", ",

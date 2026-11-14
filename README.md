@@ -161,21 +161,27 @@ Version 0.6 has breaking changes:
 - Values are always `String`s. `set` stores `string(value)`, so
   `set(ini, "s", "k", 1.5)` followed by `get(ini, "s", "k")` returns `"1.5"`.
   Use `get_float`, `get_int` or `get_bool` to get typed values.
-- `get(ini, section, key)` returns `nothing` instead of `:notfound` for a
-  missing key.
+- `get(ini, section, key)` and `get(ini, key)` return `nothing` instead of
+  `:notfound` for a missing key. Checks such as `value === :notfound` do not
+  throw an error, they just stop matching, so search for `:notfound` and change
+  them to `value === nothing`.
 - `get(ini, key, default)` is removed, because it was the same call as
   `get(ini, section, key)` when the default was a string
   ([#16](https://github.com/JuliaIO/IniFile.jl/issues/16)). Use
   `get(defaults(ini), key, default)`.
-- `get_bool` only accepts 1/yes/true/on and 0/no/false/off (in any case) and
-  throws an `ArgumentError` for anything else; it used to return `false`.
+- `get_bool` accepts 1/yes/true/on and 0/no/false/off (in any case) and
+  throws an `ArgumentError` for anything else. It used to return `true` only
+  for `true` and `false` for everything else, so `yes`, `on` and `1` now read
+  as `true` instead of `false`.
 - `get_bool`, `get_int` and `get_float` throw a `KeyError` for a missing key
   (instead of a `MethodError`), and an `ArgumentError` that names the key for a
   value that cannot be parsed.
 - `sections(ini)`, `section(ini, name)` and `defaults(ini)` return `OrderedDict`s
   with `String` keys and values instead of `Dict{AbstractString,...}`.
-- `show(io, ini)`, `print` and `string` give a one-line summary such as
-  `Inifile(2 sections, 5 keys)`. Use `write(io, ini)` to get the file contents.
+- `show(io, ini)` and `repr(ini)` give a one-line summary such as
+  `Inifile(2 sections, 5 keys)`, which is also how an `Inifile` appears inside
+  arrays and other containers. `print`, `string` and `write` still give the file
+  contents.
 - A line indented more than the previous entry is now a continuation of that
   entry's value (previously it was read as a separate entry).
 - Malformed lines are reported with `@warn` instead of being printed to

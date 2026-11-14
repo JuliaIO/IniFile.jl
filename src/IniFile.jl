@@ -1,11 +1,19 @@
-__precompile__()
+"""
+    IniFile
+
+Read, query, modify and write INI configuration files.
+
+The parser follows the conventions of Python's `configparser`: `key = value` or
+`key: value` entries grouped under `[section]` headers, full-line comments
+starting with `#` or `;`, and multi-line values written as indented continuation
+lines. Sections and keys keep the order in which they were read or added, so
+files round-trip through `read` and `write`.
+
+See [`Inifile`](@ref) to get started.
+"""
 module IniFile
 
-import Base.get,
-       Base.haskey,
-       Base.read,
-       Base.write,
-       Base.show
+using OrderedCollections: OrderedDict
 
 export Inifile,
        defaults,
@@ -17,138 +25,493 @@ export Inifile,
        section,
        sections
 
-const INIVAL = Union{AbstractString,Number,Bool,Nothing}
-const HTSS   = Dict{AbstractString,INIVAL}
+"""
+    IniFile.SectionDict
 
-mutable struct Inifile
-    sections::Dict{AbstractString,HTSS}
-    defaults::HTSS
+The type of a section: an `OrderedDict{String,String}` mapping keys to values in
+the order the keys were first added.
+"""
+const SectionDict = OrderedDict{String,String}
+
+"""
+    Inifile(; lowercase_keys=false, inline_comment_prefixes=(), strict=false)
+
+An INI file held in memory: named sections, each mapping keys to string values,
+plus a set of default key/value pairs. Sections and keys keep their insertion
+order.
+
+Create an empty one with `Inifile()` and fill it with [`read`](@ref) or
+[`set`](@ref), or create and read in one step with
+`read(Inifile, path_or_io; kwargs...)`. Query it with [`get`](@ref),
+[`get_bool`](@ref), [`get_int`](@ref) and [`get_float`](@ref), and save it with
+[`write`](@ref).
+
+Key/value pairs that appear before the first section header are stored as
+*defaults* (see [`defaults`](@ref)). A lookup in any section falls back to them
+when the section does not have the key.
+
+# Keywords
+- `lowercase_keys::Bool = false`: store and look up keys in lowercase, so that
+  `Key`, `KEY` and `key` are the same key. This matches the default
+  `optionxform` of Python's `configparser`. It applies to `read`, `get`, `set`,
+  `haskey` and the typed getters. Section names stay case-sensitive.
+- `inline_comment_prefixes = ()`: strings or characters that start a comment
+  in the middle of a line, such as `(";", "#")`. A prefix only starts a comment
+  at the beginning of a line or after whitespace, so `a = b;c` keeps its `;`.
+  Inline comments are off by default, as in Python 3's `configparser`, because
+  values may legitimately contain `;` or `#`.
+- `strict::Bool = false`: throw an `ArgumentError` on a malformed line instead
+  of logging a warning and skipping it. A line is malformed if it is not blank,
+  a comment, a `[section]` header, a `key = value` or `key: value` entry, or a
+  continuation line.
+
+# Examples
+```julia-repl
+julia> ini = Inifile();
+
+julia> set(ini, "server", "port", 8080)
+8080
+
+julia> get(ini, "server", "port")
+"8080"
+
+julia> get_int(ini, "server", "port")
+8080
+
+julia> ini = read(Inifile, "config.ini"; lowercase_keys=true);
+```
+"""
+struct Inifile
+    sections::OrderedDict{String,SectionDict}
+    defaults::SectionDict
+    lowercase_keys::Bool
+    inline_comment_prefixes::Vector{String}
+    strict::Bool
 end
 
-Inifile() = Inifile(Dict{AbstractString,HTSS}(), HTSS())
+function Inifile(; lowercase_keys::Bool=false, inline_comment_prefixes=(), strict::Bool=false)
+    prefixes = String[string(p) for p in inline_comment_prefixes]
+    any(isempty, prefixes) && throw(ArgumentError("inline comment prefixes must not be empty"))
+    return Inifile(OrderedDict{String,SectionDict}(), SectionDict(), lowercase_keys, prefixes, strict)
+end
 
-defaults(inifile::Inifile) = inifile.defaults
+# Normalize a key to the form in which it is stored.
+_key(ini::Inifile, key::AbstractString) = ini.lowercase_keys ? lowercase(key) : String(key)
 
-sections(inifile::Inifile) = inifile.sections
+"""
+    defaults(ini::Inifile) -> OrderedDict{String,String}
 
-function read(inifile::Inifile, stream::IO)
-    current_section = inifile.defaults
-    for line in eachline(stream)
-        s = strip(line)
-        # comments start with # or ;
-        if length(s) < 3 || s[1] == '#' || s[1] == ';'
+Return the default key/value pairs of `ini`: those that appear before the first
+section header in a file, or that were added with `set(ini, key, value)`.
+
+The returned dictionary is the one stored in `ini`, so modifying it modifies
+`ini`. Keys added to it directly are not lowercased, even when `ini` was created
+with `lowercase_keys=true`.
+"""
+defaults(ini::Inifile) = ini.defaults
+
+"""
+    sections(ini::Inifile) -> OrderedDict{String,OrderedDict{String,String}}
+
+Return the sections of `ini`, mapping each section name to its key/value pairs,
+in the order the sections were first read or added. The defaults are not
+included; see [`defaults`](@ref).
+
+The returned dictionary is the one stored in `ini`, so modifying it modifies
+`ini`.
+"""
+sections(ini::Inifile) = ini.sections
+
+"""
+    has_section(ini::Inifile, name::AbstractString) -> Bool
+
+Return whether `ini` has a section called `name`.
+"""
+has_section(ini::Inifile, name::AbstractString) = haskey(ini.sections, name)
+
+"""
+    section(ini::Inifile, name::AbstractString) -> OrderedDict{String,String}
+
+Return the key/value pairs of the section called `name`, or throw a `KeyError`
+if there is no such section. Defaults are not merged in.
+
+The returned dictionary is the one stored in `ini`, so modifying it modifies
+`ini`.
+"""
+section(ini::Inifile, name::AbstractString) = ini.sections[name]
+
+"""
+    haskey(ini::Inifile, section::AbstractString, key::AbstractString) -> Bool
+
+Return whether the section `section` exists and contains `key`. Unlike
+[`get`](@ref), this does not look in the defaults.
+"""
+function Base.haskey(ini::Inifile, section::AbstractString, key::AbstractString)
+    sec = get(ini.sections, section, nothing)
+    return sec !== nothing && haskey(sec, _key(ini, key))
+end
+
+#
+# Reading
+#
+
+"""
+    read(ini::Inifile, io::IO) -> ini
+    read(ini::Inifile, filename::AbstractString) -> ini
+    read(Inifile, io_or_filename; kwargs...) -> Inifile
+
+Parse INI text from a stream or a file into `ini` and return `ini`. The last
+form creates a new [`Inifile`](@ref), passing the keyword arguments
+(`lowercase_keys`, `inline_comment_prefixes`, `strict`) to its constructor.
+
+Reading into an `Inifile` that already has content merges the new content in:
+sections that appear again are extended, and keys that appear again are
+overwritten.
+
+# Syntax
+- Blank lines are ignored, except inside a multi-line value.
+- Lines whose first non-blank character is `#` or `;` are comments.
+- `[name]` starts a section called `name`. Entries before the first section
+  header go to the defaults.
+- `key = value` or `key: value` sets a key; the first `=` or `:` on the line is
+  the delimiter. Whitespace around the key and the value is removed. The value
+  may be empty, as in `key =`.
+- A line indented more than the line that started the current entry continues
+  its value. The lines of a value are joined with `"\\n"`, blank lines inside the
+  value are kept, and trailing blank lines are dropped. Comment lines inside a
+  value are skipped.
+- Inline comments are recognized only if `ini` was created with
+  `inline_comment_prefixes`.
+- A UTF-8 byte order mark at the start of the input is ignored, and both `\\n`
+  and `\\r\\n` line endings are accepted.
+
+Any other line is malformed. It is skipped with a warning that gives its line
+number or, if `ini` was created with `strict=true`, an `ArgumentError` is thrown
+and `ini` is left partially read.
+
+# Examples
+```julia-repl
+julia> ini = read(Inifile, IOBuffer(\"\"\"
+           [paths]
+           data = /srv/data
+           search =
+               /usr/lib
+               /opt/lib
+           \"\"\"));
+
+julia> get(ini, "paths", "data")
+"/srv/data"
+
+julia> get(ini, "paths", "search")
+"\\n/usr/lib\\n/opt/lib"
+```
+"""
+Base.read(ini::Inifile, io::IO) = _parse!(ini, io, nothing)
+
+Base.read(ini::Inifile, filename::AbstractString) =
+    open(io -> _parse!(ini, io, String(filename)), filename)
+
+Base.read(::Type{Inifile}, src::Union{IO,AbstractString}; kwargs...) =
+    read(Inifile(; kwargs...), src)
+
+function _parse!(ini::Inifile, io::IO, source::Union{String,Nothing})
+    sec = ini.defaults         # section that receives new entries
+    key = nothing              # key of the entry whose value may still continue
+    value = String[]           # lines of that value so far
+    indent = 0                 # indentation of the line that started the entry
+    for (lineno, line) in enumerate(eachline(io))
+        if lineno == 1 && startswith(line, '\ufeff')
+            line = String(chop(line; head=1, tail=0))
+        end
+        stripped = strip(line)
+        # full-line comments are skipped; they do not end a multi-line value
+        if startswith(stripped, '#') || startswith(stripped, ';')
             continue
-        elseif s[1] == '[' && s[end] == ']'
-            section = s[2:end-1]
-            if !haskey(inifile.sections, section)
-                inifile.sections[section] = HTSS()
-            end
-            current_section = inifile.sections[section]
+        end
+        text = strip(_strip_inline_comment(line, ini.inline_comment_prefixes))
+        if isempty(text)
+            # a blank line may be part of a multi-line value, a comment is not
+            key !== nothing && isempty(stripped) && push!(value, "")
+            continue
+        end
+        ind = something(findfirst(!isspace, line), 1)
+        if key !== nothing && ind > indent
+            push!(value, text)
+            continue
+        end
+        # this line starts something new, so the previous value is complete
+        key === nothing || (sec[key] = _joinvalue(value))
+        key = nothing
+        indent = ind
+        if startswith(text, '[') && endswith(text, ']') && ncodeunits(text) > 2
+            sec = get!(SectionDict, ini.sections, String(chop(text; head=1, tail=1)))
         else
-            i = findfirst(isequal('='), s)
-            j = findfirst(isequal(':'), s)
-            if i === nothing && j === nothing
-                # TODO: allow multiline values
-                println("skipping malformed line: $s")
-            else
-                idx = min(ifelse(i === nothing, 0, i), ifelse(j === nothing, 0, j))
-                if idx == 0
-                    idx = max(ifelse(i === nothing, 0, i), ifelse(j === nothing, 0, j))
-                end
-                key = rstrip(s[1:idx-1])
-                val = lstrip(s[idx+1:end])
-                current_section[key] = val
+            i = findfirst(c -> c == '=' || c == ':', text)
+            k = i === nothing ? "" : rstrip(SubString(text, 1, prevind(text, i)))
+            if isempty(k)
+                _malformed(ini, source, lineno, line)
+                continue
             end
+            key = _key(ini, k)
+            empty!(value)
+            push!(value, String(lstrip(SubString(text, nextind(text, i)))))
         end
     end
-    inifile
+    key === nothing || (sec[key] = _joinvalue(value))
+    return ini
 end
 
-function read(inifile::Inifile, filename::AbstractString)
-    open(filename) do f
-        read(inifile, f)
-    end
-    inifile
-end
+_joinvalue(lines::Vector{String}) = String(rstrip(join(lines, '\n')))
 
-show(io::IO, inifile::Inifile) = write(io, inifile)
-function write(io::IO, inifile::Inifile)
-    for (key, value) in defaults(inifile)
-        println(io, "$key=$value")
-    end
-    for (name, htss) in sections(inifile)
-        println(io, "[$name]")
-        for (key, value) in htss
-            println(io, "$key=$value")
+# Cut `line` at the earliest inline comment prefix that starts the line or
+# follows whitespace, as Python's configparser does.
+function _strip_inline_comment(line::AbstractString, prefixes::Vector{String})
+    isempty(prefixes) && return line
+    cut = 0
+    for prefix in prefixes
+        r = findfirst(prefix, line)
+        while r !== nothing
+            i = first(r)
+            if i == 1 || isspace(line[prevind(line, i)])
+                cut = cut == 0 ? i : min(cut, i)
+                break
+            end
+            r = findnext(prefix, line, nextind(line, i))
         end
     end
+    return cut == 0 ? line : SubString(line, 1, prevind(line, cut))
 end
 
-get(inifile::Inifile, section::AbstractString, key::AbstractString) = get(inifile, section, key, :notfound)
-
-function get(inifile::Inifile, section::AbstractString, key::AbstractString, notfound)
-    if haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
-        return inifile.sections[section][key]
-    elseif haskey(inifile.defaults, key)
-        return inifile.defaults[key]
-    end
-    notfound
+function _malformed(ini::Inifile, source, lineno::Int, line::AbstractString)
+    location = source === nothing ? "line $lineno" : "line $lineno of $source"
+    msg = "malformed $location: $(repr(String(line))); expected `[section]`, `key = value` or `key: value`"
+    ini.strict && throw(ArgumentError(msg))
+    @warn "Skipping $msg"
+    return nothing
 end
 
-# This get function uses the defaults section
-get(inifile::Inifile, key::AbstractString) = get(inifile, key, :notfound)
+#
+# Writing and display
+#
 
-function get(inifile::Inifile,  key::AbstractString, notfound)
-    if haskey(inifile.defaults, key)
-        return inifile.defaults[key]
+"""
+    write(io::IO, ini::Inifile) -> Int
+    write(filename::AbstractString, ini::Inifile) -> Int
+
+Write `ini` in INI format and return the number of bytes written. Defaults come
+first, then each section in order, separated by blank lines. Entries are written
+as `key = value`. Multi-line values are written as continuation lines indented
+with a tab, so that [`read`](@ref) restores them.
+
+`print(io, ini)` and `string(ini)` also give the file contents.
+
+# Examples
+```julia-repl
+julia> ini = Inifile();
+
+julia> set(ini, "b", "x", 1); set(ini, "a", "y", "two\\nlines");
+
+julia> write(stdout, ini);
+[b]
+x = 1
+
+[a]
+y = two
+	lines
+```
+"""
+function Base.write(io::IO, ini::Inifile)
+    buf = IOBuffer()
+    _write_entries(buf, ini.defaults)
+    for (name, sec) in ini.sections
+        position(buf) > 0 && println(buf)
+        println(buf, '[', name, ']')
+        _write_entries(buf, sec)
     end
-    notfound
+    return write(io, take!(buf))
 end
 
-function set(inifile::Inifile, section::AbstractString, key::AbstractString, val::INIVAL)
-    if !haskey(inifile.sections, section)
-        (val == nothing) && return val
-        inifile.sections[section] = HTSS()
-    end
-
-    sec = inifile.sections[section] 
-    if val == nothing
-        if haskey(sec, key)
-            delete!(sec, key)
+function _write_entries(io::IO, sec::SectionDict)
+    for (key, value) in sec
+        lines = split(value, '\n')
+        print(io, key, " =")
+        isempty(lines[1]) || print(io, ' ', lines[1])
+        for line in @view lines[2:end]
+            println(io)
+            isempty(line) || print(io, '\t', line)
         end
-        return val
+        println(io)
     end
-    sec[key] = val
-    val
 end
 
-# This set function uses the defaults section
-function set(inifile::Inifile, key::AbstractString, val::INIVAL)
-    sec = inifile.defaults
-    if val == nothing
-        if haskey(sec, key)
-            delete!(sec, key)
-        end
-        return val
-    end
-    sec[key] = val
-    val
+_plural(n::Int, word::String) = n == 1 ? "1 $word" : "$n $(word)s"
+
+# `print` and `string` give the file contents, as they did in IniFile 0.5.
+Base.print(io::IO, ini::Inifile) = (write(io, ini); nothing)
+
+# Compact form, used when shown inside containers and by `repr`.
+function Base.show(io::IO, ini::Inifile)
+    nkeys = length(ini.defaults) + sum(length, values(ini.sections); init=0)
+    print(io, "Inifile(", _plural(length(ini.sections), "section"), ", ",
+          _plural(nkeys, "key"), ")")
 end
 
-get_bool(inifile::Inifile, section::AbstractString, key::AbstractString) =
-    lowercase(get(inifile, section, key)) == "true"
+# Full form, used by the REPL: a summary line followed by the file contents.
+function Base.show(io::IO, ::MIME"text/plain", ini::Inifile)
+    show(io, ini)
+    text = sprint(write, ini)
+    isempty(text) || print(io, ":\n", chomp(text))
+end
 
-get_int(inifile::Inifile, section::AbstractString, key::AbstractString) =
-    parse(Int, get(inifile, section, key))
+#
+# Getting and setting values
+#
 
-get_float(inifile::Inifile, section::AbstractString, key::AbstractString) =
-    parse(Float64, get(inifile, section, key))
+"""
+    get(ini::Inifile, section::AbstractString, key::AbstractString, default=nothing)
 
-haskey(inifile::Inifile, section::AbstractString, key::AbstractString) =
-    haskey(inifile.sections, section) && haskey(inifile.sections[section], key)
+Return the value of `key` in `section` as a `String`. If the section does not
+have the key, look in the defaults; if the key is not there either, return
+`default`.
 
-has_section(inifile::Inifile, section::AbstractString) = haskey(inifile.sections, section)
+See also [`get_bool`](@ref), [`get_int`](@ref) and [`get_float`](@ref).
+"""
+function Base.get(ini::Inifile, section::AbstractString, key::AbstractString, default)
+    k = _key(ini, key)
+    sec = get(ini.sections, section, nothing)
+    if sec !== nothing
+        value = get(sec, k, nothing)
+        value === nothing || return value
+    end
+    return get(ini.defaults, k, default)
+end
 
-section(inifile::Inifile, section::AbstractString) = inifile.sections[section]
+Base.get(ini::Inifile, section::AbstractString, key::AbstractString) =
+    get(ini, section, key, nothing)
+
+"""
+    get(ini::Inifile, key::AbstractString)
+
+Return the value of `key` in the defaults as a `String`, or `nothing` if there is
+no such key.
+
+There is no method taking a default value, because `get(ini, key, default)`
+would be the same call as `get(ini, section, key)`. Use
+`get(defaults(ini), key, default)` instead.
+"""
+Base.get(ini::Inifile, key::AbstractString) = get(ini.defaults, _key(ini, key), nothing)
+
+"""
+    set(ini::Inifile, section::AbstractString, key::AbstractString, value) -> value
+    set(ini::Inifile, key::AbstractString, value) -> value
+
+Set `key` to `value` in `section`, creating the section if needed, and return
+`value`. Without a section, set `key` in the defaults.
+
+`value` may be a string, a number or a `Bool`. It is stored as `string(value)`,
+so [`get`](@ref) always returns a `String`; read it back with
+[`get_int`](@ref), [`get_float`](@ref) or [`get_bool`](@ref) to get a number or
+a `Bool`. If `value` is `nothing`, the key is removed instead (and a missing
+section is not created).
+"""
+function set(ini::Inifile, section::AbstractString, key::AbstractString,
+             value::Union{AbstractString,Number,Nothing})
+    if value === nothing
+        sec = get(ini.sections, section, nothing)
+        sec === nothing || delete!(sec, _key(ini, key))
+    else
+        get!(SectionDict, ini.sections, String(section))[_key(ini, key)] = string(value)
+    end
+    return value
+end
+
+function set(ini::Inifile, key::AbstractString, value::Union{AbstractString,Number,Nothing})
+    if value === nothing
+        delete!(ini.defaults, _key(ini, key))
+    else
+        ini.defaults[_key(ini, key)] = string(value)
+    end
+    return value
+end
+
+function _require(ini::Inifile, section::AbstractString, key::AbstractString)
+    value = get(ini, section, key)
+    value === nothing && throw(KeyError((String(section), String(key))))
+    return value
+end
+
+const _BOOLEANS = Dict("1" => true, "yes" => true, "true" => true, "on" => true,
+                       "0" => false, "no" => false, "false" => false, "off" => false)
+
+function _parse_bool(value::AbstractString, section::AbstractString, key::AbstractString)
+    b = get(_BOOLEANS, lowercase(strip(value)), nothing)
+    b === nothing && throw(ArgumentError(
+        "value $(repr(value)) of key $(repr(key)) in section $(repr(section)) is not a boolean; " *
+        "expected 1, yes, true, on, 0, no, false or off (in any letter case)"))
+    return b
+end
+
+function _parse_number(::Type{T}, value::AbstractString, section::AbstractString,
+                       key::AbstractString) where {T<:Real}
+    x = tryparse(T, value)
+    x === nothing && throw(ArgumentError(
+        "value $(repr(value)) of key $(repr(key)) in section $(repr(section)) is not a valid $T"))
+    return x
+end
+
+"""
+    get_bool(ini::Inifile, section::AbstractString, key::AbstractString[, default])
+
+Return the value of `key` in `section` (or in the defaults) as a `Bool`. As in
+Python's `configparser`, `1`, `yes`, `true` and `on` mean `true`, and `0`, `no`,
+`false` and `off` mean `false`, in any letter case. Any other value throws an
+`ArgumentError` that names the section, key and value.
+
+If the key is missing, return `default`, or throw a `KeyError` if no default is
+given.
+"""
+get_bool(ini::Inifile, section::AbstractString, key::AbstractString) =
+    _parse_bool(_require(ini, section, key), section, key)
+
+function get_bool(ini::Inifile, section::AbstractString, key::AbstractString, default)
+    value = get(ini, section, key)
+    return value === nothing ? default : _parse_bool(value, section, key)
+end
+
+"""
+    get_int(ini::Inifile, section::AbstractString, key::AbstractString[, default])
+
+Return the value of `key` in `section` (or in the defaults) parsed as an `Int`.
+A value that cannot be parsed throws an `ArgumentError` that names the section,
+key and value.
+
+If the key is missing, return `default`, or throw a `KeyError` if no default is
+given.
+"""
+get_int(ini::Inifile, section::AbstractString, key::AbstractString) =
+    _parse_number(Int, _require(ini, section, key), section, key)
+
+function get_int(ini::Inifile, section::AbstractString, key::AbstractString, default)
+    value = get(ini, section, key)
+    return value === nothing ? default : _parse_number(Int, value, section, key)
+end
+
+"""
+    get_float(ini::Inifile, section::AbstractString, key::AbstractString[, default])
+
+Return the value of `key` in `section` (or in the defaults) parsed as a
+`Float64`. A value that cannot be parsed throws an `ArgumentError` that names
+the section, key and value.
+
+If the key is missing, return `default`, or throw a `KeyError` if no default is
+given.
+"""
+get_float(ini::Inifile, section::AbstractString, key::AbstractString) =
+    _parse_number(Float64, _require(ini, section, key), section, key)
+
+function get_float(ini::Inifile, section::AbstractString, key::AbstractString, default)
+    value = get(ini, section, key)
+    return value === nothing ? default : _parse_number(Float64, value, section, key)
+end
 
 end # module

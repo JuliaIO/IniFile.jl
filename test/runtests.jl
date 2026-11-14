@@ -12,7 +12,7 @@ contents(ini) = (collect(defaults(ini)), [name => collect(sec) for (name, sec) i
 @testset "IniFile" begin
 
 @testset "test.ini" begin
-    ini = Inifile()
+    ini = Inifile(multiline_values=true)
     @test read(ini, TESTINI) === ini
 
     # section exists
@@ -70,13 +70,17 @@ contents(ini) = (collect(defaults(ini)), [name => collect(sec) for (name, sec) i
     @test get(ini, "section 4", "multiline1") == "This is multiple\nlines of text"
     @test get(ini, "section 4", "multiline2") ==
           "This is multiple\nlines of text that ; should be\nformed into a single value ; and a comment"
-    ini2 = read(Inifile, TESTINI; inline_comment_prefixes=(";",))
+    ini2 = read(Inifile, TESTINI; inline_comment_prefixes=(";",), multiline_values=true)
     @test get(ini2, "section 4", "midline") == "value"
     @test get(ini2, "section 4", "multiline2") ==
           "This is multiple\nlines of text that\nformed into a single value"
 
+    # without multiline_values, the continuation lines are malformed, as in 0.5
+    ini2 = @test_logs (:warn, r"lines of text") (:warn, r"lines of text that") (:warn, r"formed into") read(Inifile, TESTINI)
+    @test get(ini2, "section 4", "multiline1") == "This is multiple"
+
     # round trip through write
-    ini2 = parse_ini(ini_string(ini))
+    ini2 = parse_ini(ini_string(ini); multiline_values=true)
     @test contents(ini2) == contents(ini)
     @test get(ini2, "section 3", "strname1") == "new string"
     @test get(ini2, "section 3", "intname1") == "1"
@@ -299,6 +303,8 @@ end
 end
 
 @testset "multi-line values" begin
+    parse_ini(text; kwargs...) = read(Inifile, IOBuffer(text); multiline_values=true, kwargs...)
+
     text = """
         [s]
         key1 = first line
@@ -345,7 +351,7 @@ end
         """
     @test contents(parse_ini(ini_string(ini))) == contents(ini)
 
-    ini = Inifile()
+    ini = Inifile(multiline_values=true)
     set(ini, "s", "k", "x\ny\n\nz")
     @test get(parse_ini(ini_string(ini)), "s", "k") == "x\ny\n\nz"
 
@@ -366,6 +372,168 @@ end
     @test_logs (:warn, r"line 2") parse_ini("[s]\n  stray\n")
 end
 
+@testset "multiline_values is off by default" begin
+    text = """
+        [s]
+        a = 1
+            b = 2
+        c = first
+
+            d = 4
+        """
+    # every line stands on its own, as in IniFile 0.5
+    @test contents(parse_ini(text)) ==
+          ([], ["s" => ["a" => "1", "b" => "2", "c" => "first", "d" => "4"]])
+    # with the option, indented lines continue the value above them
+    @test contents(parse_ini(text; multiline_values=true)) ==
+          ([], ["s" => ["a" => "1\nb = 2", "c" => "first\n\nd = 4"]])
+
+    # an indented line without a delimiter is malformed
+    text = "[s]\na = 1\n    continued\n"
+    ini = @test_logs (:warn, r"line 3: \"    continued\"") parse_ini(text)
+    @test get(ini, "s", "a") == "1"
+    @test_throws ArgumentError parse_ini(text; strict=true)
+    @test get(parse_ini(text; multiline_values=true, strict=true), "s", "a") == "1\ncontinued"
+end
+
+@testset "write refuses values that span several lines" begin
+    ini = Inifile()
+    set(ini, "s", "k", "two\nlines")
+    err = @test_throws ArgumentError ini_string(ini)
+    @test occursin("key \"k\" in section \"s\"", err.value.msg)
+    @test occursin("multiline_values=true", err.value.msg)
+    # print, string and interpolation do not check, so they never throw
+    @test string(ini) == "[s]\nk = two\n\tlines\n"
+    @test sprint(print, ini) == string(ini)
+    @test "config: $ini" == "config: [s]\nk = two\n\tlines\n"
+
+    # nothing is written, and an existing file is left as it was
+    io = IOBuffer()
+    @test_throws ArgumentError write(io, ini)
+    @test position(io) == 0
+    path = joinpath(mktempdir(), "keep.ini")
+    write(path, "[s]\nk = old\n")
+    @test_throws ArgumentError write(path, ini)
+    @test read(path, String) == "[s]\nk = old\n"
+
+    # display does not throw
+    @test repr("text/plain", ini) == "Inifile(1 section, 1 key):\n[s]\nk = two\n\tlines"
+
+    # a value in the defaults
+    ini = Inifile()
+    set(ini, "top", "a\nb")
+    err = @test_throws ArgumentError ini_string(ini)
+    @test occursin("key \"top\" in the defaults", err.value.msg)
+    set(ini, "top", "a")
+    @test ini_string(ini) == "top = a\n"
+
+    # with multiline_values=true the value is written and read back
+    ini = Inifile(multiline_values=true)
+    set(ini, "s", "k", "two\nlines")
+    @test ini_string(ini) == "[s]\nk = two\n\tlines\n"
+    @test get(parse_ini(ini_string(ini); multiline_values=true), "s", "k") == "two\nlines"
+    # as documented, surrounding whitespace on each line, trailing blank lines
+    # and lines that look like comments do not survive
+    set(ini, "s", "k", "a\n# b\n  c  \n\n")
+    @test get(parse_ini(ini_string(ini); multiline_values=true), "s", "k") == "a\nc"
+end
+
+@testset "repeated keys and sections" begin
+    text = """
+        solver = cg+amg
+        solver = amg
+        [a]
+        x = 1
+        y = 2
+        x = 3
+        [b]
+        x = 4
+        [a]
+        y = 5
+        z = 6
+        """
+    # the last value wins and keeps the key's first position; a repeated header
+    # adds to the first section, which keeps its place. strict does not change this.
+    for strict in (false, true), multiline_values in (false, true)
+        ini = parse_ini(text; strict=strict, multiline_values=multiline_values)
+        @test contents(ini) == (["solver" => "amg"],
+                                ["a" => ["x" => "3", "y" => "5", "z" => "6"], "b" => ["x" => "4"]])
+    end
+
+    # appending a line at the end of a file overrides an earlier one
+    ini = parse_ini("""
+        [Options for advanced mode]
+        solver = cg+amg
+        mask = none
+        solver = cholmod
+        """; strict=true)
+    @test get(ini, "Options for advanced mode", "solver") == "cholmod"
+    @test collect(keys(section(ini, "Options for advanced mode"))) == ["solver", "mask"]
+
+    # with lowercase_keys, keys that differ only in case are the same key
+    ini = parse_ini("[s]\nSolver = a\nSOLVER = b\n"; lowercase_keys=true)
+    @test collect(section(ini, "s")) == ["solver" => "b"]
+end
+
+@testset "merged" begin
+    ini = parse_ini("""
+        solver = cg+amg
+        scenario = pairwise
+        [Options for advanced mode]
+        solver = cholmod
+        mask = none
+        [Output options]
+        write_cur_maps = True
+        [Options for advanced mode]
+        mask = file.asc
+        [Habitat raster]
+        scenario = advanced
+        """)
+    m = merged(ini)
+    @test m isa IniFile.OrderedDict{String,String}
+    # defaults first, then each section in order; later ones win, and each key
+    # keeps the position where it first appeared
+    @test collect(m) == ["solver" => "cholmod", "scenario" => "advanced",
+                         "mask" => "file.asc", "write_cur_maps" => "True"]
+
+    # a later section wins over a later line in a repeated, earlier section
+    ini = parse_ini("""
+        [x]
+        solver = a
+        [y]
+        solver = b
+        [x]
+        solver = c
+        """)
+    @test get(ini, "x", "solver") == "c"
+    @test merged(ini)["solver"] == "b"
+
+    # a line appended at the end of the file, in the last section, wins
+    ini = parse_ini("""
+        [Options for advanced mode]
+        solver = cg+amg
+        [Output options]
+        write_cur_maps = True
+        solver = cholmod
+        """; strict=true)
+    @test merged(ini)["solver"] == "cholmod"
+    @test get(ini, "Options for advanced mode", "solver") == "cg+amg"
+
+    # the result is a copy
+    m = merged(ini)
+    m["solver"] = "changed"
+    m["new"] = "1"
+    @test get(ini, "Output options", "solver") == "cholmod"
+    @test !haskey(ini, "Output options", "new")
+    ini = parse_ini("a = 1\n")
+    @test merged(ini) == defaults(ini)
+    @test merged(ini) !== defaults(ini)
+
+    @test isempty(merged(Inifile()))
+    @test collect(merged(parse_ini("Solver = a\n[s]\nSOLVER = b\n"; lowercase_keys=true))) ==
+          ["solver" => "b"]
+end
+
 @testset "inline comments" begin
     text = """
         [s]
@@ -379,12 +547,12 @@ end
             line # two
             ; full-line comment
         """
-    ini = parse_ini(text)
+    ini = parse_ini(text; multiline_values=true)
     @test get(ini, "s", "a") == "value ; comment"
     @test get(ini, "s", "b") == "value # comment"
     @test get(ini, "s", "e") == "; only a comment"
 
-    ini = parse_ini(text; inline_comment_prefixes=(";", "#"))
+    ini = parse_ini(text; inline_comment_prefixes=(";", "#"), multiline_values=true)
     @test get(ini, "s", "a") == "value"
     @test get(ini, "s", "b") == "value"
     @test get(ini, "s", "c") == "no;comment"
@@ -393,7 +561,7 @@ end
     @test get(ini, "s", "url") == "http://example.com/#anchor"
     @test get(ini, "s", "f") == "multi\nline"
 
-    ini = parse_ini(text; inline_comment_prefixes=[';'])
+    ini = parse_ini(text; inline_comment_prefixes=[';'], multiline_values=true)
     @test get(ini, "s", "a") == "value"
     @test get(ini, "s", "b") == "value # comment"
 

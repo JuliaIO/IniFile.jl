@@ -5,9 +5,10 @@ Read, query, modify and write INI configuration files.
 
 The parser follows the conventions of Python's `configparser`: `key = value` or
 `key: value` entries grouped under `[section]` headers, full-line comments
-starting with `#` or `;`, and multi-line values written as indented continuation
-lines. Sections and keys keep the order in which they were read or added, so
-files round-trip through `read` and `write`.
+starting with `#` or `;`, and, when enabled with `multiline_values=true`,
+multi-line values written as indented continuation lines. Sections and keys keep
+the order in which they were read or added, so files round-trip through `read`
+and `write`.
 
 See [`Inifile`](@ref) to get started.
 """
@@ -22,6 +23,7 @@ export Inifile,
        get_int,
        get_float,
        has_section,
+       merged,
        section,
        sections
 
@@ -34,7 +36,7 @@ the order the keys were first added.
 const SectionDict = OrderedDict{String,String}
 
 """
-    Inifile(; lowercase_keys=false, inline_comment_prefixes=(), strict=false)
+    Inifile(; lowercase_keys=false, inline_comment_prefixes=(), multiline_values=false, strict=false)
 
 An INI file held in memory: named sections, each mapping keys to string values,
 plus a set of default key/value pairs. Sections and keys keep their insertion
@@ -60,10 +62,17 @@ when the section does not have the key.
   at the beginning of a line or after whitespace, so `a = b;c` keeps its `;`.
   Inline comments are off by default, as in Python 3's `configparser`, because
   values may legitimately contain `;` or `#`.
+- `multiline_values::Bool = false`: allow values that span several lines. A
+  line indented more than the line that started an entry then continues that
+  entry's value, as in Python's `configparser`. When `false`, every line stands
+  on its own and leading whitespace is ignored, as in IniFile 0.5, and
+  [`write`](@ref) throws for a value that contains a newline, because it could
+  not be read back.
 - `strict::Bool = false`: throw an `ArgumentError` on a malformed line instead
   of logging a warning and skipping it. A line is malformed if it is not blank,
-  a comment, a `[section]` header, a `key = value` or `key: value` entry, or a
-  continuation line.
+  a comment, a `[section]` header, a `key = value` or `key: value` entry, or,
+  with `multiline_values=true`, a continuation line. `strict` does not affect
+  repeated keys or sections, which are always allowed (see [`read`](@ref)).
 
 # Examples
 ```julia-repl
@@ -86,13 +95,16 @@ struct Inifile
     defaults::SectionDict
     lowercase_keys::Bool
     inline_comment_prefixes::Vector{String}
+    multiline_values::Bool
     strict::Bool
 end
 
-function Inifile(; lowercase_keys::Bool=false, inline_comment_prefixes=(), strict::Bool=false)
+function Inifile(; lowercase_keys::Bool=false, inline_comment_prefixes=(),
+                 multiline_values::Bool=false, strict::Bool=false)
     prefixes = String[string(p) for p in inline_comment_prefixes]
     any(isempty, prefixes) && throw(ArgumentError("inline comment prefixes must not be empty"))
-    return Inifile(OrderedDict{String,SectionDict}(), SectionDict(), lowercase_keys, prefixes, strict)
+    return Inifile(OrderedDict{String,SectionDict}(), SectionDict(), lowercase_keys, prefixes,
+                   multiline_values, strict)
 end
 
 # Normalize a key to the form in which it is stored.
@@ -141,6 +153,50 @@ The returned dictionary is the one stored in `ini`, so modifying it modifies
 section(ini::Inifile, name::AbstractString) = ini.sections[name]
 
 """
+    merged(ini::Inifile) -> OrderedDict{String,String}
+
+Return the keys of `ini` from the defaults and from all sections in one
+dictionary. The defaults come first, then the keys of each section, with the
+sections in order. When a key appears in more than one place, the later one
+wins: a key in a section overrides the same key in the defaults, and a key in a
+later section overrides the same key in an earlier section. Each key keeps the
+position where it first appeared.
+
+Sections are ordered by where their header first appears, and a header that
+appears again adds to the earlier section (see [`read`](@ref)). So a key in a
+later section wins even over a line further down the file that is in a repeated,
+earlier section.
+
+The result is a new dictionary: changing it does not change `ini`.
+
+# Examples
+```julia-repl
+julia> ini = read(Inifile, IOBuffer(\"\"\"
+           solver = cg+amg
+           [options]
+           solver = cholmod
+           [output]
+           write_maps = true
+           \"\"\"));
+
+julia> merged(ini)["solver"]
+"cholmod"
+
+julia> collect(keys(merged(ini)))
+2-element Vector{String}:
+ "solver"
+ "write_maps"
+```
+"""
+function merged(ini::Inifile)
+    result = copy(ini.defaults)
+    for sec in values(ini.sections)
+        merge!(result, sec)
+    end
+    return result
+end
+
+"""
     haskey(ini::Inifile, section::AbstractString, key::AbstractString) -> Bool
 
 Return whether the section `section` exists and contains `key`. Unlike
@@ -162,11 +218,11 @@ end
 
 Parse INI text from a stream or a file into `ini` and return `ini`. The last
 form creates a new [`Inifile`](@ref), passing the keyword arguments
-(`lowercase_keys`, `inline_comment_prefixes`, `strict`) to its constructor.
+(`lowercase_keys`, `inline_comment_prefixes`, `multiline_values`, `strict`) to
+its constructor.
 
-Reading into an `Inifile` that already has content merges the new content in:
-sections that appear again are extended, and keys that appear again are
-overwritten.
+Reading into an `Inifile` that already has content merges the new content in,
+in the same way as repeated sections and keys within one file (see below).
 
 # Syntax
 - Blank lines are ignored, except inside a multi-line value.
@@ -176,10 +232,11 @@ overwritten.
 - `key = value` or `key: value` sets a key; the first `=` or `:` on the line is
   the delimiter. Whitespace around the key and the value is removed. The value
   may be empty, as in `key =`.
-- A line indented more than the line that started the current entry continues
-  its value. The lines of a value are joined with `"\\n"`, blank lines inside the
-  value are kept, and trailing blank lines are dropped. Comment lines inside a
-  value are skipped.
+- Leading whitespace is ignored, unless `ini` was created with
+  `multiline_values=true`. Then a line indented more than the line that started
+  the current entry continues its value. The lines of a value are joined with
+  `"\\n"`, blank lines inside the value are kept, and trailing blank lines are
+  dropped. Comment lines inside a value are skipped.
 - Inline comments are recognized only if `ini` was created with
   `inline_comment_prefixes`.
 - A UTF-8 byte order mark at the start of the input is ignored, and both `\\n`
@@ -189,6 +246,17 @@ Any other line is malformed. It is skipped with a warning that gives its line
 number or, if `ini` was created with `strict=true`, an `ArgumentError` is thrown
 and `ini` is left partially read.
 
+# Repeated keys and sections
+- A key that appears again in the same section replaces the earlier value, and
+  keeps the position where it first appeared. The last value wins.
+- A section header that appears again does not start a new section. The entries
+  that follow it are added to the earlier section, which keeps the position of
+  its first header.
+- Repeated keys and sections are never an error, even with `strict=true`.
+
+[`merged`](@ref) combines the defaults and all sections into one dictionary, in
+which a key in a later section overrides the same key in an earlier one.
+
 # Examples
 ```julia-repl
 julia> ini = read(Inifile, IOBuffer(\"\"\"
@@ -197,7 +265,7 @@ julia> ini = read(Inifile, IOBuffer(\"\"\"
            search =
                /usr/lib
                /opt/lib
-           \"\"\"));
+           \"\"\"); multiline_values=true);
 
 julia> get(ini, "paths", "data")
 "/srv/data"
@@ -231,11 +299,11 @@ function _parse!(ini::Inifile, io::IO, source::Union{String,Nothing})
         text = strip(_strip_inline_comment(line, ini.inline_comment_prefixes))
         if isempty(text)
             # a blank line may be part of a multi-line value, a comment is not
-            key !== nothing && isempty(stripped) && push!(value, "")
+            ini.multiline_values && key !== nothing && isempty(stripped) && push!(value, "")
             continue
         end
         ind = something(findfirst(!isspace, line), 1)
-        if key !== nothing && ind > indent
+        if ini.multiline_values && key !== nothing && ind > indent
             push!(value, text)
             continue
         end
@@ -300,14 +368,23 @@ end
 
 Write `ini` in INI format and return the number of bytes written. Defaults come
 first, then each section in order, separated by blank lines. Entries are written
-as `key = value`. Multi-line values are written as continuation lines indented
-with a tab, so that [`read`](@ref) restores them.
+as `key = value`.
 
-`print(io, ini)` and `string(ini)` also give the file contents.
+If `ini` was created with `multiline_values=true`, a value that contains
+newlines is written as continuation lines indented with a tab, which
+[`read`](@ref) joins again. As with any value, whitespace at the start and end
+of each line is not kept, and neither are blank lines at the end of the value or
+lines that start with `#` or `;`, which are read as comments. Without
+`multiline_values=true`, such a value could not be read back at all, so `write`
+throws an `ArgumentError` that names its key and section, before anything is
+written.
+
+`print(io, ini)` and `string(ini)` give the same text as `write`, but do not
+check values, so they never throw.
 
 # Examples
 ```julia-repl
-julia> ini = Inifile();
+julia> ini = Inifile(multiline_values=true);
 
 julia> set(ini, "b", "x", 1); set(ini, "a", "y", "two\\nlines");
 
@@ -321,6 +398,38 @@ y = two
 ```
 """
 function Base.write(io::IO, ini::Inifile)
+    _check_writable(ini)
+    return write(io, _contents(ini))
+end
+
+# Check before opening the file, so that an error does not leave it empty.
+function Base.write(filename::AbstractString, ini::Inifile)
+    _check_writable(ini)
+    return open(io -> write(io, ini), filename, "w")
+end
+
+# Throw if `ini` has a value that `read` could not restore from the written text.
+function _check_writable(ini::Inifile)
+    ini.multiline_values && return nothing
+    _check_single_line(ini.defaults, nothing)
+    for (name, sec) in ini.sections
+        _check_single_line(sec, name)
+    end
+    return nothing
+end
+
+function _check_single_line(sec::SectionDict, name::Union{String,Nothing})
+    for (key, value) in sec
+        occursin('\n', value) || continue
+        where = name === nothing ? "the defaults" : "section $(repr(name))"
+        throw(ArgumentError(
+            "cannot write key $(repr(key)) in $where: its value spans several lines, " *
+            "which can only be written by an Inifile created with multiline_values=true"))
+    end
+end
+
+# The INI text of `ini`, as bytes.
+function _contents(ini::Inifile)
     buf = IOBuffer()
     _write_entries(buf, ini.defaults)
     for (name, sec) in ini.sections
@@ -328,7 +437,7 @@ function Base.write(io::IO, ini::Inifile)
         println(buf, '[', name, ']')
         _write_entries(buf, sec)
     end
-    return write(io, take!(buf))
+    return take!(buf)
 end
 
 function _write_entries(io::IO, sec::SectionDict)
@@ -346,8 +455,9 @@ end
 
 _plural(n::Int, word::String) = n == 1 ? "1 $word" : "$n $(word)s"
 
-# `print` and `string` give the file contents, as they did in IniFile 0.5.
-Base.print(io::IO, ini::Inifile) = (write(io, ini); nothing)
+# `print` and `string` give the file contents, as they did in IniFile 0.5. Unlike
+# `write`, they do not check values, so that logging an Inifile never throws.
+Base.print(io::IO, ini::Inifile) = (write(io, _contents(ini)); nothing)
 
 # Compact form, used when shown inside containers and by `repr`.
 function Base.show(io::IO, ini::Inifile)
@@ -359,7 +469,8 @@ end
 # Full form, used by the REPL: a summary line followed by the file contents.
 function Base.show(io::IO, ::MIME"text/plain", ini::Inifile)
     show(io, ini)
-    text = sprint(write, ini)
+    # unlike `write`, display never throws, even for values that span several lines
+    text = String(_contents(ini))
     isempty(text) || print(io, ":\n", chomp(text))
 end
 
@@ -412,7 +523,10 @@ Set `key` to `value` in `section`, creating the section if needed, and return
 so [`get`](@ref) always returns a `String`; read it back with
 [`get_int`](@ref), [`get_float`](@ref) or [`get_bool`](@ref) to get a number or
 a `Bool`. If `value` is `nothing`, the key is removed instead (and a missing
-section is not created).
+section is not created). Setting an existing key keeps its position.
+
+A value that contains newlines can be set, but only an `Inifile` created with
+`multiline_values=true` can [`write`](@ref) it.
 """
 function set(ini::Inifile, section::AbstractString, key::AbstractString,
              value::Union{AbstractString,Number,Nothing})

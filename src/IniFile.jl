@@ -4,9 +4,10 @@
 Read, query, modify and write INI configuration files.
 
 The parser follows the conventions of Python's `configparser`: `key = value` or
-`key: value` entries grouped under `[section]` headers, and full-line comments
-starting with `#` or `;`. Sections and keys keep the order in which they were
-read or added, so files round-trip through `read` and `write`.
+`key: value` entries grouped under `[section]` headers, full-line comments
+starting with `#` or `;`, and multi-line values written as indented continuation
+lines. Sections and keys keep the order in which they were read or added, so
+files round-trip through `read` and `write`.
 
 See [`Inifile`](@ref) to get started.
 """
@@ -33,7 +34,7 @@ the order the keys were first added.
 const SectionDict = OrderedDict{String,String}
 
 """
-    Inifile(; lowercase_keys=false, strict=false)
+    Inifile(; lowercase_keys=false, inline_comment_prefixes=(), strict=false)
 
 An INI file held in memory: named sections, each mapping keys to string values,
 plus a set of default key/value pairs. Sections and keys keep their insertion
@@ -54,9 +55,15 @@ when the section does not have the key.
   `Key`, `KEY` and `key` are the same key. This matches the default
   `optionxform` of Python's `configparser`. It applies to `read`, `get`, `set`,
   `haskey` and the typed getters. Section names stay case-sensitive.
+- `inline_comment_prefixes = ()`: strings or characters that start a comment
+  in the middle of a line, such as `(";", "#")`. A prefix only starts a comment
+  at the beginning of a line or after whitespace, so `a = b;c` keeps its `;`.
+  Inline comments are off by default, as in Python 3's `configparser`, because
+  values may legitimately contain `;` or `#`.
 - `strict::Bool = false`: throw an `ArgumentError` on a malformed line instead
   of logging a warning and skipping it. A line is malformed if it is not blank,
-  a comment, a `[section]` header, or a `key = value` or `key: value` entry.
+  a comment, a `[section]` header, a `key = value` or `key: value` entry, or a
+  continuation line.
 
 # Examples
 ```julia-repl
@@ -78,11 +85,15 @@ struct Inifile
     sections::OrderedDict{String,SectionDict}
     defaults::SectionDict
     lowercase_keys::Bool
+    inline_comment_prefixes::Vector{String}
     strict::Bool
 end
 
-Inifile(; lowercase_keys::Bool=false, strict::Bool=false) =
-    Inifile(OrderedDict{String,SectionDict}(), SectionDict(), lowercase_keys, strict)
+function Inifile(; lowercase_keys::Bool=false, inline_comment_prefixes=(), strict::Bool=false)
+    prefixes = String[string(p) for p in inline_comment_prefixes]
+    any(isempty, prefixes) && throw(ArgumentError("inline comment prefixes must not be empty"))
+    return Inifile(OrderedDict{String,SectionDict}(), SectionDict(), lowercase_keys, prefixes, strict)
+end
 
 # Normalize a key to the form in which it is stored.
 _key(ini::Inifile, key::AbstractString) = ini.lowercase_keys ? lowercase(key) : String(key)
@@ -151,20 +162,26 @@ end
 
 Parse INI text from a stream or a file into `ini` and return `ini`. The last
 form creates a new [`Inifile`](@ref), passing the keyword arguments
-(`lowercase_keys`, `strict`) to its constructor.
+(`lowercase_keys`, `inline_comment_prefixes`, `strict`) to its constructor.
 
 Reading into an `Inifile` that already has content merges the new content in:
 sections that appear again are extended, and keys that appear again are
 overwritten.
 
 # Syntax
-- Blank lines are ignored.
+- Blank lines are ignored, except inside a multi-line value.
 - Lines whose first non-blank character is `#` or `;` are comments.
 - `[name]` starts a section called `name`. Entries before the first section
   header go to the defaults.
 - `key = value` or `key: value` sets a key; the first `=` or `:` on the line is
   the delimiter. Whitespace around the key and the value is removed. The value
   may be empty, as in `key =`.
+- A line indented more than the line that started the current entry continues
+  its value. The lines of a value are joined with `"\\n"`, blank lines inside the
+  value are kept, and trailing blank lines are dropped. Comment lines inside a
+  value are skipped.
+- Inline comments are recognized only if `ini` was created with
+  `inline_comment_prefixes`.
 - A UTF-8 byte order mark at the start of the input is ignored, and both `\\n`
   and `\\r\\n` line endings are accepted.
 
@@ -177,10 +194,16 @@ and `ini` is left partially read.
 julia> ini = read(Inifile, IOBuffer(\"\"\"
            [paths]
            data = /srv/data
+           search =
+               /usr/lib
+               /opt/lib
            \"\"\"));
 
 julia> get(ini, "paths", "data")
 "/srv/data"
+
+julia> get(ini, "paths", "search")
+"\\n/usr/lib\\n/opt/lib"
 ```
 """
 Base.read(ini::Inifile, io::IO) = _parse!(ini, io, nothing)
@@ -193,14 +216,34 @@ Base.read(::Type{Inifile}, src::Union{IO,AbstractString}; kwargs...) =
 
 function _parse!(ini::Inifile, io::IO, source::Union{String,Nothing})
     sec = ini.defaults         # section that receives new entries
+    key = nothing              # key of the entry whose value may still continue
+    value = String[]           # lines of that value so far
+    indent = 0                 # indentation of the line that started the entry
     for (lineno, line) in enumerate(eachline(io))
         if lineno == 1 && startswith(line, '\ufeff')
             line = String(chop(line; head=1, tail=0))
         end
-        text = strip(line)
-        if isempty(text) || startswith(text, '#') || startswith(text, ';')
+        stripped = strip(line)
+        # full-line comments are skipped; they do not end a multi-line value
+        if startswith(stripped, '#') || startswith(stripped, ';')
             continue
-        elseif startswith(text, '[') && endswith(text, ']') && ncodeunits(text) > 2
+        end
+        text = strip(_strip_inline_comment(line, ini.inline_comment_prefixes))
+        if isempty(text)
+            # a blank line may be part of a multi-line value, a comment is not
+            key !== nothing && isempty(stripped) && push!(value, "")
+            continue
+        end
+        ind = something(findfirst(!isspace, line), 1)
+        if key !== nothing && ind > indent
+            push!(value, text)
+            continue
+        end
+        # this line starts something new, so the previous value is complete
+        key === nothing || (sec[key] = _joinvalue(value))
+        key = nothing
+        indent = ind
+        if startswith(text, '[') && endswith(text, ']') && ncodeunits(text) > 2
             sec = get!(SectionDict, ini.sections, String(chop(text; head=1, tail=1)))
         else
             i = findfirst(c -> c == '=' || c == ':', text)
@@ -209,10 +252,34 @@ function _parse!(ini::Inifile, io::IO, source::Union{String,Nothing})
                 _malformed(ini, source, lineno, line)
                 continue
             end
-            sec[_key(ini, k)] = String(lstrip(SubString(text, nextind(text, i))))
+            key = _key(ini, k)
+            empty!(value)
+            push!(value, String(lstrip(SubString(text, nextind(text, i)))))
         end
     end
+    key === nothing || (sec[key] = _joinvalue(value))
     return ini
+end
+
+_joinvalue(lines::Vector{String}) = String(rstrip(join(lines, '\n')))
+
+# Cut `line` at the earliest inline comment prefix that starts the line or
+# follows whitespace, as Python's configparser does.
+function _strip_inline_comment(line::AbstractString, prefixes::Vector{String})
+    isempty(prefixes) && return line
+    cut = 0
+    for prefix in prefixes
+        r = findfirst(prefix, line)
+        while r !== nothing
+            i = first(r)
+            if i == 1 || isspace(line[prevind(line, i)])
+                cut = cut == 0 ? i : min(cut, i)
+                break
+            end
+            r = findnext(prefix, line, nextind(line, i))
+        end
+    end
+    return cut == 0 ? line : SubString(line, 1, prevind(line, cut))
 end
 
 function _malformed(ini::Inifile, source, lineno::Int, line::AbstractString)
@@ -233,13 +300,14 @@ end
 
 Write `ini` in INI format and return the number of bytes written. Defaults come
 first, then each section in order, separated by blank lines. Entries are written
-as `key = value`.
+as `key = value`. Multi-line values are written as continuation lines indented
+with a tab, so that [`read`](@ref) restores them.
 
 # Examples
 ```julia-repl
 julia> ini = Inifile();
 
-julia> set(ini, "b", "x", 1); set(ini, "a", "y", "two");
+julia> set(ini, "b", "x", 1); set(ini, "a", "y", "two\\nlines");
 
 julia> write(stdout, ini);
 [b]
@@ -247,6 +315,7 @@ x = 1
 
 [a]
 y = two
+	lines
 ```
 """
 function Base.write(io::IO, ini::Inifile)
@@ -262,7 +331,14 @@ end
 
 function _write_entries(io::IO, sec::SectionDict)
     for (key, value) in sec
-        isempty(value) ? println(io, key, " =") : println(io, key, " = ", value)
+        lines = split(value, '\n')
+        print(io, key, " =")
+        isempty(lines[1]) || print(io, ' ', lines[1])
+        for line in @view lines[2:end]
+            println(io)
+            isempty(line) || print(io, '\t', line)
+        end
+        println(io)
     end
 end
 

@@ -65,6 +65,16 @@ contents(ini) = (collect(defaults(ini)), [name => collect(sec) for (name, sec) i
     @test get(ini, "section 3", "strname1") == "new string"
     @test get(ini, "section 3", "intname1") == "1"
 
+    # multi-line values and mid-line comments (adapted from #10)
+    @test get(ini, "section 4", "midline") == "value ; comment"
+    @test get(ini, "section 4", "multiline1") == "This is multiple\nlines of text"
+    @test get(ini, "section 4", "multiline2") ==
+          "This is multiple\nlines of text that ; should be\nformed into a single value ; and a comment"
+    ini2 = read(Inifile, TESTINI; inline_comment_prefixes=(";",))
+    @test get(ini2, "section 4", "midline") == "value"
+    @test get(ini2, "section 4", "multiline2") ==
+          "This is multiple\nlines of text that\nformed into a single value"
+
     # round trip through write
     ini2 = parse_ini(ini_string(ini))
     @test contents(ini2) == contents(ini)
@@ -286,6 +296,111 @@ end
     path = joinpath(mktempdir(), "out.ini")
     @test write(path, ini) == filesize(path)
     @test read(path, String) == "[s]\nk = v\n"
+end
+
+@testset "multi-line values" begin
+    text = """
+        [s]
+        key1 = first line
+            second line
+        \tthird line
+        key2 = single
+        key3 =
+            a
+            b
+        key4 = paragraph one
+
+            paragraph two
+
+        key5 = with comments
+            # not part of the value
+            ; nor this
+            continued
+        next = 1
+        """
+    ini = parse_ini(text)
+    @test get(ini, "s", "key1") == "first line\nsecond line\nthird line"
+    @test get(ini, "s", "key2") == "single"
+    @test get(ini, "s", "key3") == "\na\nb"
+    @test get(ini, "s", "key4") == "paragraph one\n\nparagraph two"
+    @test get(ini, "s", "key5") == "with comments\ncontinued"
+    @test get(ini, "s", "next") == "1"
+
+    # written as tab-indented continuation lines, and read back unchanged
+    @test ini_string(ini) == """
+        [s]
+        key1 = first line
+        \tsecond line
+        \tthird line
+        key2 = single
+        key3 =
+        \ta
+        \tb
+        key4 = paragraph one
+
+        \tparagraph two
+        key5 = with comments
+        \tcontinued
+        next = 1
+        """
+    @test contents(parse_ini(ini_string(ini))) == contents(ini)
+
+    ini = Inifile()
+    set(ini, "s", "k", "x\ny\n\nz")
+    @test get(parse_ini(ini_string(ini)), "s", "k") == "x\ny\n\nz"
+
+    # continuation of a default
+    @test get(parse_ini("a = 1\n  2\n[s]\n"), "a") == "1\n2"
+
+    # uniformly indented entries are separate entries, as in Python 3
+    ini = parse_ini("""
+        [s]
+            a = 1
+            b = 2
+        [t]
+          c = 3
+        """)
+    @test contents(ini) == ([], ["s" => ["a" => "1", "b" => "2"], "t" => ["c" => "3"]])
+
+    # a section header cannot be continued
+    @test_logs (:warn, r"line 2") parse_ini("[s]\n  stray\n")
+end
+
+@testset "inline comments" begin
+    text = """
+        [s]
+        a = value ; comment
+        b = value # comment
+        c = no;comment
+        d = no#comment
+        e = ; only a comment
+        url = http://example.com/#anchor
+        f = multi ; one
+            line # two
+            ; full-line comment
+        """
+    ini = parse_ini(text)
+    @test get(ini, "s", "a") == "value ; comment"
+    @test get(ini, "s", "b") == "value # comment"
+    @test get(ini, "s", "e") == "; only a comment"
+
+    ini = parse_ini(text; inline_comment_prefixes=(";", "#"))
+    @test get(ini, "s", "a") == "value"
+    @test get(ini, "s", "b") == "value"
+    @test get(ini, "s", "c") == "no;comment"
+    @test get(ini, "s", "d") == "no#comment"
+    @test get(ini, "s", "e") == ""
+    @test get(ini, "s", "url") == "http://example.com/#anchor"
+    @test get(ini, "s", "f") == "multi\nline"
+
+    ini = parse_ini(text; inline_comment_prefixes=[';'])
+    @test get(ini, "s", "a") == "value"
+    @test get(ini, "s", "b") == "value # comment"
+
+    ini = parse_ini("[s] ; comment\nk = v // note\n"; inline_comment_prefixes=(";", "//"))
+    @test contents(ini) == ([], ["s" => ["k" => "v"]])
+
+    @test_throws ArgumentError Inifile(inline_comment_prefixes=[""])
 end
 
 @testset "values are stored as strings" begin

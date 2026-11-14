@@ -165,10 +165,7 @@ position where it first appeared.
 Sections are ordered by where their header first appears, and a header that
 appears again adds to the earlier section (see [`read`](@ref)). So a key in a
 later section wins even over a line further down the file that is in a repeated,
-earlier section. For a file without a `[DEFAULT]` section, this gives the same
-values as reading it with Python 2's `ConfigParser` (or Python 3's
-`configparser` with `strict=False`) and collecting the items of each section, in
-order, into one dictionary.
+earlier section.
 
 The result is a new dictionary: changing it does not change `ini`.
 
@@ -374,12 +371,16 @@ first, then each section in order, separated by blank lines. Entries are written
 as `key = value`.
 
 If `ini` was created with `multiline_values=true`, a value that contains
-newlines is written as continuation lines indented with a tab, so that
-[`read`](@ref) restores it. Otherwise such a value could not be read back, so
-`write` throws an `ArgumentError` that names its key and section, before
-anything is written.
+newlines is written as continuation lines indented with a tab, which
+[`read`](@ref) joins again. As with any value, whitespace at the start and end
+of each line is not kept, and neither are blank lines at the end of the value or
+lines that start with `#` or `;`, which are read as comments. Without
+`multiline_values=true`, such a value could not be read back at all, so `write`
+throws an `ArgumentError` that names its key and section, before anything is
+written.
 
-`print(io, ini)` and `string(ini)` also give the file contents.
+`print(io, ini)` and `string(ini)` give the same text as `write`, but do not
+check values, so they never throw.
 
 # Examples
 ```julia-repl
@@ -404,7 +405,7 @@ end
 # Check before opening the file, so that an error does not leave it empty.
 function Base.write(filename::AbstractString, ini::Inifile)
     _check_writable(ini)
-    return open(io -> write(io, _contents(ini)), filename, "w")
+    return open(io -> write(io, ini), filename, "w")
 end
 
 # Throw if `ini` has a value that `read` could not restore from the written text.
@@ -454,8 +455,9 @@ end
 
 _plural(n::Int, word::String) = n == 1 ? "1 $word" : "$n $(word)s"
 
-# `print` and `string` give the file contents, as they did in IniFile 0.5.
-Base.print(io::IO, ini::Inifile) = (write(io, ini); nothing)
+# `print` and `string` give the file contents, as they did in IniFile 0.5. Unlike
+# `write`, they do not check values, so that logging an Inifile never throws.
+Base.print(io::IO, ini::Inifile) = (write(io, _contents(ini)); nothing)
 
 # Compact form, used when shown inside containers and by `repr`.
 function Base.show(io::IO, ini::Inifile)

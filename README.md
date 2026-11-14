@@ -141,7 +141,8 @@ write("file.ini", ini)              # or write(io, ini)
 blank line between sections. Comments in the original file are not kept. A value
 that contains newlines can only be written with `multiline_values=true`;
 otherwise `write` throws an `ArgumentError` before writing anything, because the
-value could not be read back.
+value could not be read back. `print(io, ini)` and `string(ini)` give the same
+text without this check, so they never throw.
 
 ## File format
 
@@ -184,7 +185,8 @@ split(strip(get(ini, "paths", "search")), '\n')  # ["/usr/lib", "/opt/lib"]
 
 The lines are joined with `"\n"`. Blank lines inside a value are kept, and
 comment lines are skipped. `write` puts each extra line on its own line,
-indented with a tab, so the value reads back unchanged.
+indented with a tab. Whitespace at the start and end of each line is not kept,
+and a line of the value that starts with `#` or `;` reads back as a comment.
 
 Multi-line values are off by default, so indentation does not change the meaning
 of a file: every line stands on its own, as in IniFile 0.5.
@@ -245,6 +247,9 @@ Version 0.6 has breaking changes:
   `Inifile(2 sections, 5 keys)`, which is also how an `Inifile` appears inside
   arrays and other containers. `print`, `string` and `write` still give the file
   contents.
+- `write` throws an `ArgumentError` for a value that contains a newline, unless
+  the `Inifile` was created with `multiline_values=true`. Such a value used to
+  be written out as is, and the file could not be read back correctly.
 - Malformed lines are reported with `@warn` instead of being printed to
   `stdout`.
 - `Inifile` is now an immutable struct created with keyword arguments.

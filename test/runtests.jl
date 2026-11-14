@@ -402,7 +402,10 @@ end
     err = @test_throws ArgumentError ini_string(ini)
     @test occursin("key \"k\" in section \"s\"", err.value.msg)
     @test occursin("multiline_values=true", err.value.msg)
-    @test_throws ArgumentError string(ini)
+    # print, string and interpolation do not check, so they never throw
+    @test string(ini) == "[s]\nk = two\n\tlines\n"
+    @test sprint(print, ini) == string(ini)
+    @test "config: $ini" == "config: [s]\nk = two\n\tlines\n"
 
     # nothing is written, and an existing file is left as it was
     io = IOBuffer()
@@ -429,6 +432,10 @@ end
     set(ini, "s", "k", "two\nlines")
     @test ini_string(ini) == "[s]\nk = two\n\tlines\n"
     @test get(parse_ini(ini_string(ini); multiline_values=true), "s", "k") == "two\nlines"
+    # as documented, surrounding whitespace on each line, trailing blank lines
+    # and lines that look like comments do not survive
+    set(ini, "s", "k", "a\n# b\n  c  \n\n")
+    @test get(parse_ini(ini_string(ini); multiline_values=true), "s", "k") == "a\nc"
 end
 
 @testset "repeated keys and sections" begin

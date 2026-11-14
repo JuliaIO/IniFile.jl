@@ -187,4 +187,4 @@ Version 0.6 has breaking changes:
 - Malformed lines are reported with `@warn` instead of being printed to
   `stdout`.
 - `Inifile` is now an immutable struct created with keyword arguments.
-- Julia 1.10 or later is required.
+- Julia 1.6 or later is required (0.5 supported Julia 1.0).

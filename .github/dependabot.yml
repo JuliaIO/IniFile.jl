@@ -4,8 +4,12 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/" # Location of package manifests
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     groups:
       all-actions:
         patterns:
           - "*"
+  - package-ecosystem: "julia"
+    directory: "/" # Location of Project.toml
+    schedule:
+      interval: "monthly"

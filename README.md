@@ -31,10 +31,8 @@ host = example.org
 port = 8080
 debug = off
 
-[paths]
-search =
-    /usr/lib
-    /opt/lib
+[logging]
+level = info
 ```
 
 ```julia
@@ -51,10 +49,10 @@ get_int(ini, "server", "port")        # 8080
 get_bool(ini, "server", "debug")      # false
 get_float(ini, "server", "timeout", 30.0)  # 30.0
 
-split(strip(get(ini, "paths", "search")), '\n')  # ["/usr/lib", "/opt/lib"]
+merged(ini)["level"]                  # "info": all keys in one dictionary
 
 set(ini, "server", "port", 9090)
-set(ini, "logging", "level", "debug")   # creates the section
+set(ini, "cache", "size", 100)        # creates the section
 write("settings.ini", ini)
 ```
 
@@ -77,7 +75,8 @@ Options of `Inifile(...)` and `read(Inifile, ...)`:
 | --- | --- | --- |
 | `lowercase_keys` | `false` | Store and look up keys in lowercase, so `Key` and `key` are the same key, as Python's `configparser` does by default. Section names stay case-sensitive. |
 | `inline_comment_prefixes` | `()` | Prefixes such as `(";", "#")` that start a comment in the middle of a line, when they follow whitespace. Off by default, as in Python 3. |
-| `strict` | `false` | Throw an `ArgumentError` for a malformed line instead of logging a warning and skipping it. |
+| `multiline_values` | `false` | Allow values that span several lines, written as indented continuation lines (see [Multi-line values](#multi-line-values)). |
+| `strict` | `false` | Throw an `ArgumentError` for a malformed line instead of logging a warning and skipping it. Repeated keys and sections are allowed either way. |
 
 ### Querying
 
@@ -95,6 +94,7 @@ sections(ini)           # OrderedDict of section name => OrderedDict of key => v
 section(ini, "section") # OrderedDict of key => value
 defaults(ini)           # keys that appear before the first section header
 get(ini, "key")         # a key in the defaults, or nothing
+merged(ini)             # OrderedDict of all keys: the defaults, then each section
 ```
 
 A lookup in a section falls back to the defaults when the section does not have
@@ -102,6 +102,30 @@ the key. The typed getters throw a `KeyError` for a missing key when no default
 is given, and an `ArgumentError` naming the section, key and value when the value
 cannot be parsed. In particular `get_bool` rejects values such as `Ture` instead
 of reading them as `false`.
+
+### All keys in one dictionary
+
+`merged(ini)` returns a new `OrderedDict{String,String}` with the defaults and
+then the keys of each section, in section order. A key in a later section
+overrides the same key in the defaults or in an earlier section. This suits
+programs that treat sections only as a way to group options:
+
+```ini
+solver = cg+amg
+
+[Options for advanced mode]
+solver = cholmod
+mask_file = none
+
+[Output options]
+write_cur_maps = True
+```
+
+```julia
+opts = merged(read(Inifile, "job.ini"))
+opts["solver"]          # "cholmod"
+collect(keys(opts))     # ["solver", "mask_file", "write_cur_maps"]
+```
 
 ### Modifying and writing
 
@@ -113,9 +137,11 @@ set(ini, "key", value)              # set a key in the defaults
 write("file.ini", ini)              # or write(io, ini)
 ```
 
-`write` keeps the order of sections and keys, writes `key = value`, puts a blank
-line between sections, and writes multi-line values as indented continuation
-lines. Comments in the original file are not kept.
+`write` keeps the order of sections and keys, writes `key = value`, and puts a
+blank line between sections. Comments in the original file are not kept. A value
+that contains newlines can only be written with `multiline_values=true`;
+otherwise `write` throws an `ArgumentError` before writing anything, because the
+value could not be read back.
 
 ## File format
 
@@ -131,17 +157,51 @@ key = value
 # The first `=` or `:` on a line separates the key and the value
 other_key: value
 empty =
-# Lines indented further than the entry continue its value
-long value = first line
-    second line
 ```
 
 - Blank lines and lines starting with `#` or `;` are ignored.
-- Whitespace around keys and values is removed.
-- Continuation lines are joined with `"\n"`.
+- Whitespace around keys and values is removed, including indentation.
 - Inline comments, as in `key = value ; note`, are only removed when enabled
   with `inline_comment_prefixes`; otherwise they are part of the value.
 - Malformed lines are skipped with a warning that gives the line number.
+
+### Multi-line values
+
+With `multiline_values=true`, a line indented more than the line that started an
+entry continues that entry's value, as in Python's `configparser`:
+
+```ini
+[paths]
+search =
+    /usr/lib
+    /opt/lib
+```
+
+```julia
+ini = read(Inifile, "paths.ini"; multiline_values=true)
+split(strip(get(ini, "paths", "search")), '\n')  # ["/usr/lib", "/opt/lib"]
+```
+
+The lines are joined with `"\n"`. Blank lines inside a value are kept, and
+comment lines are skipped. `write` puts each extra line on its own line,
+indented with a tab, so the value reads back unchanged.
+
+Multi-line values are off by default, so indentation does not change the meaning
+of a file: every line stands on its own, as in IniFile 0.5.
+
+### Repeated keys and sections
+
+- A key that appears again in the same section replaces the earlier value and
+  keeps its first position, so the last value wins. A line appended at the end
+  of a section overrides an earlier one.
+- A section header that appears again adds its entries to the earlier section,
+  which keeps the position of its first header.
+- In `merged(ini)`, a key in a later section overrides the same key in an
+  earlier one. Sections are ordered by their first header, so a key in a later
+  section wins even over a line further down the file in a repeated, earlier
+  section.
+- Repeated keys and sections are never an error, even with `strict=true`, which
+  only concerns malformed lines.
 
 ### Differences from Python's `configparser`
 
@@ -149,8 +209,11 @@ long value = first line
   A `[DEFAULT]` section is an ordinary section.
 - There is no value interpolation (`%(name)s` or `${name}`).
 - Keys without a value (`allow_no_value`) are malformed.
+- Multi-line values must be enabled with `multiline_values=true`;
+  `configparser` always allows them.
 - Repeated sections are merged and repeated keys overwrite earlier ones, as in
-  `configparser` with `strict=False`.
+  `configparser` with `strict=False`. IniFile's `strict` option is unrelated:
+  it only makes malformed lines an error.
 - Python 2's `ConfigParser` always treated `;` after whitespace as a comment. To
   read such files the same way, use `inline_comment_prefixes=(";",)`.
 
@@ -182,8 +245,6 @@ Version 0.6 has breaking changes:
   `Inifile(2 sections, 5 keys)`, which is also how an `Inifile` appears inside
   arrays and other containers. `print`, `string` and `write` still give the file
   contents.
-- A line indented more than the previous entry is now a continuation of that
-  entry's value (previously it was read as a separate entry).
 - Malformed lines are reported with `@warn` instead of being printed to
   `stdout`.
 - `Inifile` is now an immutable struct created with keyword arguments.
